@@ -396,49 +396,66 @@
       formData.append('file', selectedFile);
       formData.append('source_lang', sourceLang.value);
       formData.append('target_lang', targetLang.value);
-      formData.append('output_format', 'same');
-
-      // Simulate progress while waiting
-      let fakeProgress = 0;
-      const fakeInterval = setInterval(() => {
-        if (fakeProgress < 85) {
-          fakeProgress += Math.random() * 3;
-          setProgress(Math.min(fakeProgress, 85));
-        }
-      }, 1500);
-
-      progressText.textContent = 'Translating… this may take a few minutes';
 
       try {
+        // Step 1: start job
         const res = await fetch('/translate', { method: 'POST', body: formData });
-
-        clearInterval(fakeInterval);
-
         if (!res.ok) {
           const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-          throw new Error(err.detail || 'Translation failed');
+          throw new Error(err.detail || 'Failed to start translation');
         }
+        const { job_id } = await res.json();
 
-        setProgress(100);
-        progressText.textContent = 'Done!';
+        progressText.textContent = 'Translating… this may take a few minutes';
 
-        const blob = await res.blob();
-        const disposition = res.headers.get('content-disposition') || '';
-        const match = disposition.match(/filename="?([^"]+)"?/);
-        const dlName = match ? match[1] : 'translated_book.epub';
+        // Step 2: listen to SSE progress
+        await new Promise((resolve, reject) => {
+          const evtSource = new EventSource(`/progress/${job_id}`);
 
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = dlName;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+          evtSource.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            if (data.heartbeat) return;
 
-        showStatus('✅ Translation complete! Download started.', 'success');
+            if (data.status === 'running') {
+              setProgress(data.progress);
+            } else if (data.status === 'done') {
+              setProgress(100);
+              progressText.textContent = 'Done! Starting download…';
+              evtSource.close();
+              resolve(data.download_url);
+            } else if (data.status === 'error') {
+              evtSource.close();
+              reject(new Error(data.error || 'Translation failed'));
+            }
+          };
+
+          evtSource.onerror = () => {
+            evtSource.close();
+            reject(new Error('Connection lost'));
+          };
+        }).then(async (downloadUrl) => {
+          // Step 3: download file
+          const dlRes = await fetch(downloadUrl);
+          if (!dlRes.ok) throw new Error('Download failed');
+
+          const blob = await dlRes.blob();
+          const disposition = dlRes.headers.get('content-disposition') || '';
+          const match = disposition.match(/filename="?([^"]+)"?/);
+          const dlName = match ? match[1] : 'translated_book.epub';
+
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = dlName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          showStatus('✅ Translation complete! Download started.', 'success');
+        });
+
       } catch (err) {
-        clearInterval(fakeInterval);
         showStatus('❌ ' + err.message, 'error');
         progressText.textContent = 'Error';
       } finally {
