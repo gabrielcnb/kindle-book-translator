@@ -2,16 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Calibre for high-quality EPUB↔PDF conversion
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libmupdf-dev \
+    calibre \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-
-RUN mkdir -p /tmp/book_translator
 
 EXPOSE 8000
 

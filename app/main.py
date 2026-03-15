@@ -5,15 +5,18 @@ import uuid
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.translator import LANGUAGES
 from app.services.epub_handler import translate_epub
 from app.services.pdf_handler import translate_pdf
+from app.services.converter import epub_to_pdf, pdf_to_epub, calibre_available
+from app.services.cover import extract_epub_cover, extract_pdf_cover
+from app import cache
 
-app = FastAPI(title="Kindle Book Translator", version="1.0.0")
+app = FastAPI(title="Kindle Book Translator", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,10 +33,18 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 MAX_SIZE = 50 * 1024 * 1024  # 50 MB
 
-# job_id -> {"status": "running"|"done"|"error", "progress": int, ...}
 jobs: dict[str, dict] = {}
-# job_id -> asyncio.Queue for SSE events
 job_queues: dict[str, asyncio.Queue] = {}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _push(job_id: str, event: dict):
+    q = job_queues.get(job_id)
+    if q:
+        q.put_nowait(event)
 
 
 async def _run_translation(
@@ -43,47 +54,85 @@ async def _run_translation(
     source_lang: str,
     target_lang: str,
     filename: str,
+    bilingual: bool,
 ):
-    queue = job_queues.get(job_id)
-
-    def push(event: dict):
-        if queue:
-            queue.put_nowait(event)
-
     def on_progress(val: int):
         jobs[job_id]["progress"] = val
-        push({"progress": val, "status": "running"})
+        _push(job_id, {"progress": val, "status": "running"})
 
     try:
         if ext == ".epub":
-            result = await translate_epub(content, source_lang, target_lang, on_progress)
-            out_ext = ".epub"
-            media_type = "application/epub+zip"
+            result = await translate_epub(
+                content, source_lang, target_lang, on_progress, bilingual=bilingual
+            )
+            out_ext, media = ".epub", "application/epub+zip"
         else:
             result = await translate_pdf(content, source_lang, target_lang, on_progress)
-            out_ext = ".pdf"
-            media_type = "application/pdf"
+            out_ext, media = ".pdf", "application/pdf"
 
-        out_name = Path(filename).stem + f"_translated_{target_lang}" + out_ext
+        suffix = "_bilingual" if bilingual else f"_translated_{target_lang}"
+        out_name = Path(filename).stem + suffix + out_ext
+        out_path = TEMP_DIR / f"{job_id}{out_ext}"
+        out_path.write_bytes(result)
+
+        cache.flush()
+
+        jobs[job_id] = {
+            "status": "done", "progress": 100,
+            "file_path": str(out_path), "filename": out_name, "media_type": media,
+        }
+        _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
+
+    except Exception as e:
+        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e)}
+        _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
+    finally:
+        job_queues.pop(job_id, None)
+
+
+async def _run_conversion(
+    job_id: str,
+    content: bytes,
+    src_ext: str,
+    out_ext: str,
+    filename: str,
+):
+    def on_progress(val: int):
+        jobs[job_id]["progress"] = val
+        _push(job_id, {"progress": val, "status": "running"})
+
+    try:
+        on_progress(10)
+        if src_ext == ".epub" and out_ext == ".pdf":
+            result = await epub_to_pdf(content)
+            media = "application/pdf"
+        elif src_ext == ".pdf" and out_ext == ".epub":
+            result = await pdf_to_epub(content, title=Path(filename).stem)
+            media = "application/epub+zip"
+        else:
+            raise ValueError(f"Unsupported conversion: {src_ext} → {out_ext}")
+
+        on_progress(95)
+        out_name = Path(filename).stem + out_ext
         out_path = TEMP_DIR / f"{job_id}{out_ext}"
         out_path.write_bytes(result)
 
         jobs[job_id] = {
-            "status": "done",
-            "progress": 100,
-            "file_path": str(out_path),
-            "filename": out_name,
-            "media_type": media_type,
+            "status": "done", "progress": 100,
+            "file_path": str(out_path), "filename": out_name, "media_type": media,
         }
-        push({"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
+        _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
         jobs[job_id] = {"status": "error", "progress": 0, "error": str(e)}
-        push({"progress": 0, "status": "error", "error": str(e)})
-
+        _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
         job_queues.pop(job_id, None)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Routes
+# ──────────────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -95,21 +144,52 @@ async def get_languages():
     return {"languages": LANGUAGES}
 
 
+@app.get("/info")
+async def info():
+    return {
+        "calibre_available": calibre_available(),
+        "cache_stats": cache.stats(),
+        "version": "2.0.0",
+    }
+
+
+@app.post("/cover")
+async def get_cover(file: UploadFile = File(...)):
+    """Return book cover as JPEG/PNG image."""
+    content = await file.read()
+    if len(content) > MAX_SIZE:
+        raise HTTPException(400, "File too large.")
+
+    ext = Path(file.filename or "").suffix.lower()
+    if ext == ".epub":
+        img = extract_epub_cover(content)
+        mime = "image/jpeg"
+    elif ext == ".pdf":
+        img = extract_pdf_cover(content)
+        mime = "image/jpeg"
+    else:
+        raise HTTPException(400, "Only EPUB and PDF supported.")
+
+    if not img:
+        raise HTTPException(404, "No cover found.")
+
+    return Response(content=img, media_type=mime)
+
+
 @app.post("/translate")
 async def start_translation(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     source_lang: str = Form("auto"),
     target_lang: str = Form("pt"),
+    bilingual: str = Form("false"),
 ):
     content = await file.read()
-
     if len(content) > MAX_SIZE:
         raise HTTPException(400, "File too large. Maximum size is 50 MB.")
 
     filename = file.filename or "book"
     ext = Path(filename).suffix.lower()
-
     if ext not in (".epub", ".pdf"):
         raise HTTPException(400, "Only EPUB and PDF files are supported.")
 
@@ -118,20 +198,49 @@ async def start_translation(
     job_queues[job_id] = asyncio.Queue()
 
     background_tasks.add_task(
-        _run_translation, job_id, content, ext, source_lang, target_lang, filename
+        _run_translation,
+        job_id, content, ext, source_lang, target_lang, filename,
+        bilingual.lower() == "true",
     )
+    return {"job_id": job_id}
 
+
+@app.post("/convert")
+async def start_conversion(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    output_format: str = Form(...),
+):
+    """Convert EPUB↔PDF without translating."""
+    content = await file.read()
+    if len(content) > MAX_SIZE:
+        raise HTTPException(400, "File too large.")
+
+    filename = file.filename or "book"
+    src_ext = Path(filename).suffix.lower()
+    out_ext = f".{output_format.lstrip('.').lower()}"
+
+    if src_ext == out_ext:
+        raise HTTPException(400, "Source and output format are the same.")
+    if src_ext not in (".epub", ".pdf") or out_ext not in (".epub", ".pdf"):
+        raise HTTPException(400, "Only EPUB and PDF are supported.")
+
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "running", "progress": 0}
+    job_queues[job_id] = asyncio.Queue()
+
+    background_tasks.add_task(
+        _run_conversion, job_id, content, src_ext, out_ext, filename
+    )
     return {"job_id": job_id}
 
 
 @app.get("/progress/{job_id}")
 async def progress_stream(job_id: str):
-    """SSE endpoint — streams real translation progress."""
     if job_id not in jobs:
         raise HTTPException(404, "Job not found.")
 
     async def generator():
-        # If job already finished before SSE connected, send final state immediately
         job = jobs.get(job_id, {})
         if job.get("status") == "done":
             yield f"data: {json.dumps({'progress': 100, 'status': 'done', 'download_url': f'/download/{job_id}'})}\n\n"
@@ -140,22 +249,21 @@ async def progress_stream(job_id: str):
             yield f"data: {json.dumps({'progress': 0, 'status': 'error', 'error': job.get('error', '')})}\n\n"
             return
 
-        queue = job_queues.get(job_id)
-        if not queue:
+        q = job_queues.get(job_id)
+        if not q:
             yield f"data: {json.dumps({'progress': 0, 'status': 'error', 'error': 'Queue gone'})}\n\n"
             return
 
-        # Send current progress immediately so frontend doesn't start at 0
         yield f"data: {json.dumps({'progress': jobs[job_id].get('progress', 0), 'status': 'running'})}\n\n"
 
         while True:
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=60)
+                event = await asyncio.wait_for(q.get(), timeout=60)
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("status") in ("done", "error"):
                     break
             except asyncio.TimeoutError:
-                yield "data: {\"heartbeat\": true}\n\n"
+                yield 'data: {"heartbeat": true}\n\n'
 
     return StreamingResponse(
         generator(),
@@ -169,13 +277,10 @@ async def download_result(job_id: str):
     job = jobs.get(job_id)
     if not job or job.get("status") != "done":
         raise HTTPException(404, "File not ready or not found.")
-
-    file_path = job["file_path"]
-    if not Path(file_path).exists():
-        raise HTTPException(404, "File expired or missing.")
-
+    if not Path(job["file_path"]).exists():
+        raise HTTPException(404, "File expired.")
     return FileResponse(
-        path=file_path,
+        path=job["file_path"],
         filename=job["filename"],
         media_type=job["media_type"],
     )

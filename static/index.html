@@ -6,467 +6,403 @@
   <title>Kindle Book Translator</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg: #0f0f13;
-      --card: #1a1a24;
-      --border: #2e2e42;
-      --accent: #6c63ff;
-      --accent2: #ff6584;
-      --text: #e8e8f0;
-      --muted: #8888a8;
-      --success: #4ade80;
-      --radius: 12px;
+      --bg: #0f0f13; --card: #1a1a24; --border: #2e2e42;
+      --accent: #6c63ff; --accent2: #ff6584; --text: #e8e8f0; --muted: #8888a8;
+      --success: #4ade80; --warn: #fbbf24; --radius: 12px;
     }
+    body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:2rem 1rem; }
 
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2rem 1rem;
-    }
+    header { text-align:center; margin-bottom:2rem; }
+    header h1 { font-size:2.1rem; font-weight:700; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    header p { color:var(--muted); margin-top:.4rem; }
 
-    header {
-      text-align: center;
-      margin-bottom: 2.5rem;
-    }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:1.75rem; width:100%; max-width:660px; }
 
-    header h1 {
-      font-size: 2.2rem;
-      font-weight: 700;
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
+    /* Tabs */
+    .tabs { display:flex; gap:4px; background:var(--bg); border-radius:8px; padding:4px; margin-bottom:1.5rem; }
+    .tab { flex:1; padding:.5rem; text-align:center; border-radius:6px; font-size:.87rem; font-weight:500; cursor:pointer; color:var(--muted); transition:.15s; border:none; background:transparent; }
+    .tab.active { background:var(--card); color:var(--text); box-shadow:0 1px 4px rgba(0,0,0,.4); }
 
-    header p {
-      color: var(--muted);
-      margin-top: 0.5rem;
-      font-size: 1rem;
-    }
+    /* Drop zone */
+    .drop-zone { border:2px dashed var(--border); border-radius:var(--radius); padding:2rem; text-align:center; cursor:pointer; transition:.2s; position:relative; }
+    .drop-zone:hover, .drop-zone.drag-over { border-color:var(--accent); background:rgba(108,99,255,.05); }
+    .drop-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+    .drop-icon { font-size:2.2rem; margin-bottom:.6rem; }
+    .drop-label { color:var(--muted); font-size:.95rem; }
+    .drop-label strong { color:var(--text); }
+    .drop-formats { font-size:.78rem; color:var(--muted); margin-top:.3rem; }
 
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 2rem;
-      width: 100%;
-      max-width: 620px;
-    }
+    /* Cover + file info */
+    .file-row { display:none; align-items:center; gap:1rem; background:rgba(108,99,255,.08); border-radius:8px; padding:.75rem 1rem; margin-top:1rem; }
+    .file-row.visible { display:flex; }
+    .cover-thumb { width:44px; height:60px; object-fit:cover; border-radius:4px; background:var(--border); flex-shrink:0; }
+    .cover-placeholder { width:44px; height:60px; background:var(--border); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; flex-shrink:0; }
+    .file-meta { flex:1; min-width:0; }
+    .file-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.9rem; }
+    .file-size { color:var(--muted); font-size:.8rem; }
+    .remove-btn { cursor:pointer; color:var(--accent2); font-size:1.2rem; flex-shrink:0; background:none; border:none; }
 
-    .drop-zone {
-      border: 2px dashed var(--border);
-      border-radius: var(--radius);
-      padding: 2.5rem;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-      position: relative;
-    }
+    /* Form fields */
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:1.1rem; }
+    .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; margin-top:1.1rem; }
+    .field label { display:block; font-size:.78rem; color:var(--muted); margin-bottom:.35rem; text-transform:uppercase; letter-spacing:.05em; }
+    select { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:.5rem .7rem; font-size:.9rem; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238888a8' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right .7rem center; cursor:pointer; }
+    select:focus { outline:none; border-color:var(--accent); }
 
-    .drop-zone:hover, .drop-zone.drag-over {
-      border-color: var(--accent);
-      background: rgba(108, 99, 255, 0.06);
-    }
+    /* Toggle */
+    .toggle-row { display:flex; align-items:center; gap:.6rem; margin-top:1.1rem; }
+    .toggle-label { font-size:.88rem; color:var(--muted); cursor:pointer; user-select:none; }
+    .toggle { position:relative; width:38px; height:22px; flex-shrink:0; }
+    .toggle input { opacity:0; width:0; height:0; }
+    .slider { position:absolute; inset:0; background:var(--border); border-radius:99px; cursor:pointer; transition:.2s; }
+    .slider::before { content:''; position:absolute; width:16px; height:16px; left:3px; bottom:3px; background:white; border-radius:50%; transition:.2s; }
+    .toggle input:checked + .slider { background:var(--accent); }
+    .toggle input:checked + .slider::before { transform:translateX(16px); }
 
-    .drop-zone input[type="file"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-      width: 100%;
-      height: 100%;
-    }
+    /* Button */
+    .btn { width:100%; margin-top:1.25rem; padding:.8rem; background:linear-gradient(135deg,var(--accent),#8b7cf8); color:#fff; border:none; border-radius:8px; font-size:.95rem; font-weight:600; cursor:pointer; transition:.15s; }
+    .btn:hover:not(:disabled) { opacity:.9; transform:translateY(-1px); }
+    .btn:disabled { opacity:.4; cursor:not-allowed; transform:none; }
+    .btn-secondary { background:var(--card); border:1px solid var(--border); color:var(--text); }
+    .btn-secondary:hover:not(:disabled) { background:var(--border); }
 
-    .drop-zone .icon { font-size: 2.5rem; margin-bottom: 0.75rem; }
-    .drop-zone .label { font-size: 1rem; color: var(--muted); }
-    .drop-zone .label strong { color: var(--text); }
-    .drop-zone .formats { font-size: 0.8rem; color: var(--muted); margin-top: 0.4rem; }
+    /* Progress */
+    .progress-wrap { display:none; margin-top:1.1rem; }
+    .progress-wrap.visible { display:block; }
+    .progress-label { display:flex; justify-content:space-between; font-size:.82rem; color:var(--muted); margin-bottom:.35rem; }
+    .progress-bg { background:var(--border); border-radius:99px; height:8px; overflow:hidden; }
+    .progress-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:99px; transition:width .4s ease; width:0%; }
 
-    .file-info {
-      display: none;
-      align-items: center;
-      gap: 0.75rem;
-      background: rgba(108, 99, 255, 0.1);
-      border-radius: 8px;
-      padding: 0.75rem 1rem;
-      margin-top: 1rem;
-    }
+    .status { margin-top:.85rem; font-size:.88rem; text-align:center; min-height:1.2em; }
+    .status.error { color:var(--accent2); }
+    .status.success { color:var(--success); }
+    .status.warn { color:var(--warn); }
 
-    .file-info.visible { display: flex; }
-    .file-info .name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .file-info .size { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
-    .file-info .remove { cursor: pointer; color: var(--accent2); font-size: 1.2rem; line-height: 1; }
+    /* Calibre badge */
+    .badge { display:inline-flex; align-items:center; gap:.3rem; font-size:.75rem; padding:.2rem .6rem; border-radius:99px; font-weight:500; }
+    .badge.green { background:rgba(74,222,128,.12); color:var(--success); border:1px solid rgba(74,222,128,.25); }
+    .badge.yellow { background:rgba(251,191,36,.1); color:var(--warn); border:1px solid rgba(251,191,36,.25); }
 
-    .row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1rem;
-      margin-top: 1.25rem;
-    }
+    /* Features */
+    .features { display:grid; grid-template-columns:repeat(3,1fr); gap:.65rem; margin-top:1.5rem; width:100%; max-width:660px; }
+    .feature { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:.85rem; text-align:center; font-size:.82rem; }
+    .feature .icon { font-size:1.35rem; margin-bottom:.3rem; }
+    .feature .title { font-weight:600; margin-bottom:.15rem; }
+    .feature .desc { color:var(--muted); font-size:.75rem; }
 
-    .field label {
-      display: block;
-      font-size: 0.82rem;
-      color: var(--muted);
-      margin-bottom: 0.4rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
+    footer { margin-top:2rem; color:var(--muted); font-size:.78rem; text-align:center; }
 
-    select {
-      width: 100%;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 8px;
-      padding: 0.55rem 0.75rem;
-      font-size: 0.95rem;
-      appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238888a8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 0.75rem center;
-      cursor: pointer;
-    }
-
-    select:focus { outline: none; border-color: var(--accent); }
-
-    .btn {
-      width: 100%;
-      margin-top: 1.5rem;
-      padding: 0.85rem;
-      background: linear-gradient(135deg, var(--accent), #8b7cf8);
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.2s, transform 0.1s;
-    }
-
-    .btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
-    .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
-
-    .progress-wrap {
-      display: none;
-      margin-top: 1.25rem;
-    }
-
-    .progress-wrap.visible { display: block; }
-
-    .progress-label {
-      display: flex;
-      justify-content: space-between;
-      font-size: 0.85rem;
-      color: var(--muted);
-      margin-bottom: 0.4rem;
-    }
-
-    .progress-bar-bg {
-      background: var(--border);
-      border-radius: 99px;
-      height: 8px;
-      overflow: hidden;
-    }
-
-    .progress-bar-fill {
-      height: 100%;
-      background: linear-gradient(90deg, var(--accent), var(--accent2));
-      border-radius: 99px;
-      transition: width 0.4s ease;
-      width: 0%;
-    }
-
-    .status {
-      margin-top: 1rem;
-      font-size: 0.9rem;
-      text-align: center;
-      min-height: 1.4em;
-    }
-
-    .status.error { color: var(--accent2); }
-    .status.success { color: var(--success); }
-
-    .features {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.75rem;
-      margin-top: 2rem;
-      max-width: 620px;
-      width: 100%;
-    }
-
-    .feature {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 1rem;
-      text-align: center;
-      font-size: 0.85rem;
-    }
-
-    .feature .icon { font-size: 1.5rem; margin-bottom: 0.35rem; }
-    .feature .title { font-weight: 600; margin-bottom: 0.2rem; }
-    .feature .desc { color: var(--muted); font-size: 0.78rem; }
-
-    footer {
-      margin-top: 2.5rem;
-      color: var(--muted);
-      font-size: 0.8rem;
-      text-align: center;
-    }
-
-    @media (max-width: 480px) {
-      .row { grid-template-columns: 1fr; }
-      .features { grid-template-columns: 1fr; }
-    }
+    @media(max-width:500px) { .row,.row-3,.features { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
 
-  <header>
-    <h1>📚 Kindle Book Translator</h1>
-    <p>Translate EPUB &amp; PDF books. Preserve covers. Ready for Kindle.</p>
-  </header>
+<header>
+  <h1>📚 Kindle Book Translator</h1>
+  <p>Translate &amp; convert EPUB / PDF — covers preserved, Kindle-ready</p>
+</header>
 
-  <div class="card">
-    <div class="drop-zone" id="dropZone">
-      <input type="file" id="fileInput" accept=".epub,.pdf" />
-      <div class="icon">📖</div>
-      <div class="label"><strong>Click to upload</strong> or drag &amp; drop</div>
-      <div class="formats">EPUB · PDF — max 50 MB</div>
+<div class="card">
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('translate', this)">🌍 Translate</button>
+    <button class="tab" onclick="switchTab('convert', this)">🔄 Convert Format</button>
+  </div>
+
+  <!-- Drop zone (shared) -->
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="fileInput" accept=".epub,.pdf" />
+    <div class="drop-icon">📖</div>
+    <div class="drop-label"><strong>Click to upload</strong> or drag &amp; drop</div>
+    <div class="drop-formats">EPUB · PDF — max 50 MB</div>
+  </div>
+
+  <div class="file-row" id="fileRow">
+    <img id="coverImg" class="cover-thumb" style="display:none" alt="cover" />
+    <div class="cover-placeholder" id="coverPlaceholder">📄</div>
+    <div class="file-meta">
+      <div class="file-name" id="fileName"></div>
+      <div class="file-size" id="fileSize"></div>
     </div>
+    <button class="remove-btn" id="removeFile" title="Remove">✕</button>
+  </div>
 
-    <div class="file-info" id="fileInfo">
-      <span class="icon">📄</span>
-      <span class="name" id="fileName"></span>
-      <span class="size" id="fileSize"></span>
-      <span class="remove" id="removeFile" title="Remove">✕</span>
-    </div>
-
+  <!-- TRANSLATE panel -->
+  <div id="panel-translate">
     <div class="row">
       <div class="field">
         <label>Source Language</label>
-        <select id="sourceLang">
-          <option value="auto">Auto Detect</option>
-        </select>
+        <select id="sourceLang"><option value="auto">Auto Detect</option></select>
       </div>
       <div class="field">
         <label>Target Language</label>
-        <select id="targetLang">
-          <option value="pt">Portuguese</option>
-        </select>
+        <select id="targetLang"><option value="pt">Portuguese</option></select>
       </div>
+    </div>
+
+    <div class="toggle-row">
+      <label class="toggle">
+        <input type="checkbox" id="bilingualToggle" />
+        <span class="slider"></span>
+      </label>
+      <span class="toggle-label" onclick="document.getElementById('bilingualToggle').click()">
+        Bilingual mode — show original &amp; translation side by side
+      </span>
     </div>
 
     <button class="btn" id="translateBtn" disabled>Translate Book</button>
-
-    <div class="progress-wrap" id="progressWrap">
-      <div class="progress-label">
-        <span id="progressText">Translating…</span>
-        <span id="progressPct">0%</span>
-      </div>
-      <div class="progress-bar-bg">
-        <div class="progress-bar-fill" id="progressFill"></div>
-      </div>
-    </div>
-
-    <div class="status" id="status"></div>
   </div>
 
-  <div class="features">
-    <div class="feature">
-      <div class="icon">🎨</div>
-      <div class="title">Cover Preserved</div>
-      <div class="desc">Original book cover stays intact in the output file</div>
+  <!-- CONVERT panel -->
+  <div id="panel-convert" style="display:none">
+    <div class="row" style="grid-template-columns:1fr">
+      <div class="field">
+        <label>Output Format</label>
+        <select id="outputFormat">
+          <option value="pdf">PDF</option>
+          <option value="epub">EPUB</option>
+        </select>
+      </div>
     </div>
-    <div class="feature">
-      <div class="icon">📱</div>
-      <div class="title">Kindle Ready</div>
-      <div class="desc">EPUB output compatible with Kindle and e-readers</div>
-    </div>
-    <div class="feature">
-      <div class="icon">🌍</div>
-      <div class="title">100+ Languages</div>
-      <div class="desc">Powered by Google Translate — no API key needed</div>
-    </div>
+    <div id="calibreInfo" style="margin-top:.75rem;font-size:.82rem;color:var(--muted)">Checking Calibre…</div>
+    <button class="btn btn-secondary" id="convertBtn" style="margin-top:1rem" disabled>Convert</button>
   </div>
 
-  <footer>
-    Open source · Free to use · <a href="https://github.com" style="color:var(--accent)">GitHub</a>
-  </footer>
+  <!-- Progress (shared) -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-label">
+      <span id="progressText">Processing…</span>
+      <span id="progressPct">0%</span>
+    </div>
+    <div class="progress-bg"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
 
-  <script>
-    const dropZone = document.getElementById('dropZone');
-    const fileInput = document.getElementById('fileInput');
-    const fileInfo = document.getElementById('fileInfo');
-    const fileName = document.getElementById('fileName');
-    const fileSize = document.getElementById('fileSize');
-    const removeFile = document.getElementById('removeFile');
-    const sourceLang = document.getElementById('sourceLang');
-    const targetLang = document.getElementById('targetLang');
-    const translateBtn = document.getElementById('translateBtn');
-    const progressWrap = document.getElementById('progressWrap');
-    const progressFill = document.getElementById('progressFill');
-    const progressPct = document.getElementById('progressPct');
-    const progressText = document.getElementById('progressText');
-    const status = document.getElementById('status');
+  <div class="status" id="status"></div>
+</div>
 
-    let selectedFile = null;
+<div class="features">
+  <div class="feature"><div class="icon">🎨</div><div class="title">Cover Preserved</div><div class="desc">Original book cover in every output</div></div>
+  <div class="feature"><div class="icon">📱</div><div class="title">Kindle Ready</div><div class="desc">EPUB output works on all e-readers</div></div>
+  <div class="feature"><div class="icon">🔄</div><div class="title">Format Convert</div><div class="desc">EPUB↔PDF without translating</div></div>
+  <div class="feature"><div class="icon">🌍</div><div class="title">100+ Languages</div><div class="desc">Google Translate, no API key needed</div></div>
+  <div class="feature"><div class="icon">⚡</div><div class="title">Smart Cache</div><div class="desc">Re-uploads skip already-translated text</div></div>
+  <div class="feature"><div class="icon">📖</div><div class="title">Bilingual Mode</div><div class="desc">Original + translation side by side</div></div>
+</div>
 
-    // Load languages
-    fetch('/languages').then(r => r.json()).then(data => {
-      const langs = data.languages;
-      Object.entries(langs).forEach(([code, name]) => {
-        const opt1 = new Option(name, code);
-        const opt2 = new Option(name, code);
-        if (code === 'pt') { opt2.selected = true; }
-        sourceLang.appendChild(opt1);
-        targetLang.appendChild(opt2);
-      });
+<footer>Open source · Free · <a href="https://github.com/gabrielcnb/kindle-book-translator" style="color:var(--accent)">GitHub</a></footer>
+
+<script>
+  // ── State ────────────────────────────────────────────────────────────────
+  let selectedFile = null;
+  let activeTab = 'translate';
+
+  // ── Init ─────────────────────────────────────────────────────────────────
+  fetch('/languages').then(r => r.json()).then(({ languages }) => {
+    const src = document.getElementById('sourceLang');
+    const tgt = document.getElementById('targetLang');
+    Object.entries(languages).forEach(([code, name]) => {
+      src.appendChild(new Option(name, code));
+      const o = new Option(name, code);
+      if (code === 'pt') o.selected = true;
+      tgt.appendChild(o);
     });
+  });
 
-    // Drag & drop
-    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-    dropZone.addEventListener('drop', e => {
-      e.preventDefault();
-      dropZone.classList.remove('drag-over');
-      const file = e.dataTransfer.files[0];
-      if (file) setFile(file);
-    });
+  fetch('/info').then(r => r.json()).then(info => {
+    const el = document.getElementById('calibreInfo');
+    if (info.calibre_available) {
+      el.innerHTML = '<span class="badge green">✓ Calibre installed — high-quality conversion</span>';
+    } else {
+      el.innerHTML = '<span class="badge yellow">⚠ Calibre not found — using fallback converter. <a href="https://calibre-ebook.com/download" target="_blank" style="color:var(--accent)">Install Calibre</a> for best results.</span>';
+    }
+  }).catch(() => {});
 
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files[0]) setFile(fileInput.files[0]);
-    });
+  // ── Tabs ─────────────────────────────────────────────────────────────────
+  function switchTab(tab, btn) {
+    activeTab = tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-translate').style.display = tab === 'translate' ? '' : 'none';
+    document.getElementById('panel-convert').style.display = tab === 'convert' ? '' : 'none';
+    updateButtons();
+  }
 
-    function setFile(file) {
-      const ext = file.name.split('.').pop().toLowerCase();
-      if (!['epub', 'pdf'].includes(ext)) {
-        showStatus('Only EPUB and PDF files are supported.', 'error');
-        return;
+  function updateButtons() {
+    const has = !!selectedFile;
+    document.getElementById('translateBtn').disabled = !has;
+    document.getElementById('convertBtn').disabled = !has;
+  }
+
+  // ── File handling ─────────────────────────────────────────────────────────
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+  document.getElementById('removeFile').addEventListener('click', clearFile);
+
+  function setFile(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['epub', 'pdf'].includes(ext)) { showStatus('Only EPUB and PDF supported.', 'error'); return; }
+    if (file.size > 50 * 1024 * 1024) { showStatus('File too large (max 50 MB).', 'error'); return; }
+
+    selectedFile = file;
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('fileSize').textContent = fmtSize(file.size);
+    document.getElementById('fileRow').classList.add('visible');
+    showStatus('');
+    updateButtons();
+    loadCover(file);
+
+    // Auto-set output format opposite to input
+    const outSel = document.getElementById('outputFormat');
+    outSel.value = ext === 'epub' ? 'pdf' : 'epub';
+  }
+
+  function clearFile() {
+    selectedFile = null;
+    fileInput.value = '';
+    document.getElementById('fileRow').classList.remove('visible');
+    document.getElementById('coverImg').style.display = 'none';
+    document.getElementById('coverPlaceholder').style.display = 'flex';
+    updateButtons();
+  }
+
+  async function loadCover(file) {
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/cover', { method: 'POST', body: fd });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const img = document.getElementById('coverImg');
+      img.src = url;
+      img.style.display = 'block';
+      document.getElementById('coverPlaceholder').style.display = 'none';
+    } catch { /* no cover, that's fine */ }
+  }
+
+  // ── Translate ─────────────────────────────────────────────────────────────
+  document.getElementById('translateBtn').addEventListener('click', async () => {
+    if (!selectedFile) return;
+    const fd = new FormData();
+    fd.append('file', selectedFile);
+    fd.append('source_lang', document.getElementById('sourceLang').value);
+    fd.append('target_lang', document.getElementById('targetLang').value);
+    fd.append('bilingual', document.getElementById('bilingualToggle').checked ? 'true' : 'false');
+
+    await runJob('/translate', fd, 'Translating');
+  });
+
+  // ── Convert ───────────────────────────────────────────────────────────────
+  document.getElementById('convertBtn').addEventListener('click', async () => {
+    if (!selectedFile) return;
+    const fd = new FormData();
+    fd.append('file', selectedFile);
+    fd.append('output_format', document.getElementById('outputFormat').value);
+
+    await runJob('/convert', fd, 'Converting');
+  });
+
+  // ── Shared job runner ─────────────────────────────────────────────────────
+  async function runJob(endpoint, formData, label) {
+    setRunning(true);
+    resetProgress(label + '…');
+    showStatus('');
+
+    try {
+      const res = await fetch(endpoint, { method: 'POST', body: formData });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(err.detail || 'Failed');
       }
-      if (file.size > 50 * 1024 * 1024) {
-        showStatus('File is too large. Maximum size is 50 MB.', 'error');
-        return;
-      }
-      selectedFile = file;
-      fileName.textContent = file.name;
-      fileSize.textContent = formatSize(file.size);
-      fileInfo.classList.add('visible');
-      translateBtn.disabled = false;
-      status.textContent = '';
+      const { job_id } = await res.json();
+
+      const downloadUrl = await listenSSE(job_id, label);
+      await downloadFile(downloadUrl);
+      showStatus('✅ Done! Download started.', 'success');
+
+    } catch (err) {
+      showStatus('❌ ' + err.message, 'error');
+      document.getElementById('progressText').textContent = 'Error';
+    } finally {
+      setRunning(false);
     }
+  }
 
-    removeFile.addEventListener('click', () => {
-      selectedFile = null;
-      fileInput.value = '';
-      fileInfo.classList.remove('visible');
-      translateBtn.disabled = true;
-    });
-
-    function formatSize(bytes) {
-      if (bytes < 1024) return bytes + ' B';
-      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    }
-
-    function showStatus(msg, type = '') {
-      status.textContent = msg;
-      status.className = 'status ' + type;
-    }
-
-    translateBtn.addEventListener('click', async () => {
-      if (!selectedFile) return;
-
-      translateBtn.disabled = true;
-      progressWrap.classList.add('visible');
-      progressFill.style.width = '0%';
-      progressPct.textContent = '0%';
-      progressText.textContent = 'Uploading…';
-      showStatus('');
-
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('source_lang', sourceLang.value);
-      formData.append('target_lang', targetLang.value);
-
-      try {
-        // Step 1: start job
-        const res = await fetch('/translate', { method: 'POST', body: formData });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-          throw new Error(err.detail || 'Failed to start translation');
+  function listenSSE(job_id, label) {
+    return new Promise((resolve, reject) => {
+      const es = new EventSource(`/progress/${job_id}`);
+      es.onmessage = e => {
+        const d = JSON.parse(e.data);
+        if (d.heartbeat) return;
+        if (d.status === 'running') {
+          setProgress(d.progress);
+          document.getElementById('progressText').textContent = `${label}… ${d.progress}%`;
+        } else if (d.status === 'done') {
+          setProgress(100);
+          document.getElementById('progressText').textContent = 'Done!';
+          es.close();
+          resolve(d.download_url);
+        } else if (d.status === 'error') {
+          es.close();
+          reject(new Error(d.error || 'Job failed'));
         }
-        const { job_id } = await res.json();
-
-        progressText.textContent = 'Translating… this may take a few minutes';
-
-        // Step 2: listen to SSE progress
-        await new Promise((resolve, reject) => {
-          const evtSource = new EventSource(`/progress/${job_id}`);
-
-          evtSource.onmessage = (e) => {
-            const data = JSON.parse(e.data);
-            if (data.heartbeat) return;
-
-            if (data.status === 'running') {
-              setProgress(data.progress);
-            } else if (data.status === 'done') {
-              setProgress(100);
-              progressText.textContent = 'Done! Starting download…';
-              evtSource.close();
-              resolve(data.download_url);
-            } else if (data.status === 'error') {
-              evtSource.close();
-              reject(new Error(data.error || 'Translation failed'));
-            }
-          };
-
-          evtSource.onerror = () => {
-            evtSource.close();
-            reject(new Error('Connection lost'));
-          };
-        }).then(async (downloadUrl) => {
-          // Step 3: download file
-          const dlRes = await fetch(downloadUrl);
-          if (!dlRes.ok) throw new Error('Download failed');
-
-          const blob = await dlRes.blob();
-          const disposition = dlRes.headers.get('content-disposition') || '';
-          const match = disposition.match(/filename="?([^"]+)"?/);
-          const dlName = match ? match[1] : 'translated_book.epub';
-
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = dlName;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-
-          showStatus('✅ Translation complete! Download started.', 'success');
-        });
-
-      } catch (err) {
-        showStatus('❌ ' + err.message, 'error');
-        progressText.textContent = 'Error';
-      } finally {
-        translateBtn.disabled = false;
-      }
+      };
+      es.onerror = () => { es.close(); reject(new Error('Connection lost')); };
     });
+  }
 
-    function setProgress(val) {
-      progressFill.style.width = val + '%';
-      progressPct.textContent = Math.round(val) + '%';
-    }
-  </script>
+  async function downloadFile(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Download failed');
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const name = match ? match[1] : 'output.epub';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  // ── UI helpers ────────────────────────────────────────────────────────────
+  function setRunning(on) {
+    document.getElementById('translateBtn').disabled = on;
+    document.getElementById('convertBtn').disabled = on;
+    document.getElementById('progressWrap').classList.toggle('visible', on);
+  }
+
+  function resetProgress(text) {
+    setProgress(0);
+    document.getElementById('progressText').textContent = text;
+  }
+
+  function setProgress(val) {
+    document.getElementById('progressFill').style.width = val + '%';
+    document.getElementById('progressPct').textContent = Math.round(val) + '%';
+  }
+
+  function showStatus(msg, type = '') {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = 'status ' + type;
+  }
+
+  function fmtSize(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    return (b / 1048576).toFixed(1) + ' MB';
+  }
+</script>
 </body>
 </html>

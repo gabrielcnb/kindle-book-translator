@@ -1,5 +1,6 @@
 import asyncio
 from deep_translator import GoogleTranslator
+from app import cache
 
 LANGUAGES = {
     "af": "Afrikaans", "sq": "Albanian", "am": "Amharic", "ar": "Arabic",
@@ -29,17 +30,17 @@ LANGUAGES = {
     "th": "Thai", "tr": "Turkish", "tk": "Turkmen", "uk": "Ukrainian",
     "ur": "Urdu", "ug": "Uyghur", "uz": "Uzbek", "vi": "Vietnamese",
     "cy": "Welsh", "xh": "Xhosa", "yi": "Yiddish", "yo": "Yoruba",
-    "zu": "Zulu"
+    "zu": "Zulu",
 }
 
 MAX_CHUNK = 4500
-DELAY_BETWEEN_REQUESTS = 0.5
+DELAY_BETWEEN_REQUESTS = 0.4
 
 
 def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
     if len(text) <= max_size:
         return [text]
-    chunks = []
+    chunks: list[str] = []
     sentences = text.replace("\n", " \n ").split(". ")
     current = ""
     for sentence in sentences:
@@ -51,7 +52,7 @@ def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
             current += (". " if current else "") + sentence
     if current:
         chunks.append(current.strip())
-    return chunks if chunks else [text[:max_size]]
+    return chunks or [text[:max_size]]
 
 
 async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
@@ -59,16 +60,25 @@ async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
         return text
 
     chunks = split_text(text)
-    translated_chunks = []
+    translated_chunks: list[str] = []
+
+    translator = GoogleTranslator(source=source_lang, target=target_lang)
 
     for chunk in chunks:
         if not chunk.strip():
             translated_chunks.append(chunk)
             continue
+
+        cached = cache.get(source_lang, target_lang, chunk)
+        if cached is not None:
+            translated_chunks.append(cached)
+            continue
+
         try:
-            translator = GoogleTranslator(source=source_lang, target=target_lang)
             result = await asyncio.to_thread(translator.translate, chunk)
-            translated_chunks.append(result or chunk)
+            result = result or chunk
+            cache.set(source_lang, target_lang, chunk, result)
+            translated_chunks.append(result)
             await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
         except Exception:
             translated_chunks.append(chunk)
