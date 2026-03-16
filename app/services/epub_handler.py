@@ -1,4 +1,5 @@
 import io
+import re
 from typing import Callable
 import ebooklib
 from ebooklib import epub
@@ -10,6 +11,11 @@ BLOCK_TAGS = frozenset({
     "p", "h1", "h2", "h3", "h4", "h5", "h6",
     "li", "td", "th", "dt", "dd", "blockquote", "figcaption",
 })
+
+# Separator that Google Translate preserves (treats as unknown acronym)
+BATCH_SEP = "KBTXSEP"
+BATCH_SEP_RE = re.compile(re.escape(BATCH_SEP))
+BATCH_SIZE = 12  # blocks per API call (reduces calls ~12x)
 
 
 def _should_skip(node) -> bool:
@@ -46,6 +52,44 @@ def _collect_blocks(soup) -> list[tuple[Tag, list[NavigableString]]]:
     return blocks
 
 
+async def _batch_translate(
+    texts: list[str],
+    source_lang: str,
+    target_lang: str,
+) -> list[str]:
+    """Translate a list of texts in batches, preserving order.
+    Falls back to individual translation if separator is mangled."""
+    results = list(texts)  # copy, fill in-place
+
+    for batch_start in range(0, len(texts), BATCH_SIZE):
+        batch = texts[batch_start : batch_start + BATCH_SIZE]
+
+        # Only translate non-empty entries
+        nonempty = [(i, t) for i, t in enumerate(batch) if t.strip()]
+        if not nonempty:
+            continue
+
+        indices, nonempty_texts = zip(*nonempty)
+
+        joined = f" {BATCH_SEP} ".join(nonempty_texts)
+        translated_joined = await translate_text(joined, source_lang, target_lang)
+
+        # Split back — handle Google adding/removing spaces around separator
+        parts = [p.strip() for p in BATCH_SEP_RE.split(translated_joined)]
+
+        if len(parts) == len(nonempty_texts):
+            for local_i, global_i in enumerate(indices):
+                results[batch_start + global_i] = parts[local_i]
+        else:
+            # Fallback: translate individually
+            for local_i, global_i in enumerate(indices):
+                results[batch_start + global_i] = await translate_text(
+                    nonempty_texts[local_i], source_lang, target_lang
+                )
+
+    return results
+
+
 async def translate_epub(
     file_bytes: bytes,
     source_lang: str,
@@ -58,7 +102,6 @@ async def translate_epub(
     total = max(len(items), 1)
 
     if bilingual:
-        # Inject CSS for bilingual style
         css = epub.EpubItem(
             uid="bilingual_css",
             file_name="bilingual.css",
@@ -91,20 +134,30 @@ async def translate_epub(
             ))
 
         blocks = _collect_blocks(soup)
-        n_blocks = max(len(blocks), 1)
+        if not blocks:
+            if progress_callback:
+                progress_callback(int((doc_idx + 1) / total * 90))
+            continue
 
-        for blk_idx, (block, text_nodes) in enumerate(blocks):
-            full_text = " ".join(str(n).strip() for n in text_nodes if str(n).strip())
-            if not full_text:
+        # Extract text for all blocks at once
+        texts = [
+            " ".join(str(n).strip() for n in text_nodes if str(n).strip())
+            for _, text_nodes in blocks
+        ]
+
+        # Batch-translate all blocks for this document
+        translations = await _batch_translate(texts, source_lang, target_lang)
+
+        # Apply translations back to DOM
+        for (block, _), translated in zip(blocks, translations):
+            if not translated:
                 continue
-
-            translated = await translate_text(full_text, source_lang, target_lang)
-
             if bilingual:
+                orig_text = block.get_text(separator=" ").strip()
                 block.clear()
                 orig_span = soup.new_tag("span")
                 orig_span["class"] = "original-text"
-                orig_span.string = full_text
+                orig_span.string = orig_text
 
                 trans_span = soup.new_tag("span")
                 trans_span["class"] = "translated-text"
@@ -116,14 +169,10 @@ async def translate_epub(
                 block.clear()
                 block.string = translated
 
-            if progress_callback:
-                overall = (doc_idx / total + (blk_idx / n_blocks) / total) * 90
-                progress_callback(int(overall))
-
-        item.set_content(str(soup).encode("utf-8"))
-
         if progress_callback:
             progress_callback(int((doc_idx + 1) / total * 90))
+
+        item.set_content(str(soup).encode("utf-8"))
 
     out = io.BytesIO()
     epub.write_epub(out, book)

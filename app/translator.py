@@ -34,7 +34,9 @@ LANGUAGES = {
 }
 
 MAX_CHUNK = 4500
-DELAY_BETWEEN_REQUESTS = 0.4
+DELAY_BETWEEN_REQUESTS = 0.15  # reduced from 0.4
+TRANSLATE_TIMEOUT = 30  # seconds per API call
+MAX_RETRIES = 2
 
 
 def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
@@ -53,6 +55,29 @@ def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
     if current:
         chunks.append(current.strip())
     return chunks or [text[:max_size]]
+
+
+async def _translate_chunk(translator: GoogleTranslator, chunk: str) -> str:
+    """Translate a single chunk with timeout and retry."""
+    last_exc: BaseException | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(translator.translate, chunk),
+                timeout=TRANSLATE_TIMEOUT,
+            )
+            return result or chunk
+        except asyncio.TimeoutError as e:
+            last_exc = e
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(1.0 * (attempt + 1))
+        except Exception as e:
+            last_exc = e
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(1.0 * (attempt + 1))
+    # Log failure and return original text as fallback
+    print(f"[translator] chunk failed after {MAX_RETRIES} attempts: {last_exc}")
+    return chunk
 
 
 async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
@@ -74,13 +99,9 @@ async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
             translated_chunks.append(cached)
             continue
 
-        try:
-            result = await asyncio.to_thread(translator.translate, chunk)
-            result = result or chunk
-            cache.set(source_lang, target_lang, chunk, result)
-            translated_chunks.append(result)
-            await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
-        except Exception:
-            translated_chunks.append(chunk)
+        result = await _translate_chunk(translator, chunk)
+        cache.set(source_lang, target_lang, chunk, result)
+        translated_chunks.append(result)
+        await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
 
     return " ".join(translated_chunks)
