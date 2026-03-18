@@ -57,7 +57,17 @@ async def translate_pdf(
 
         if span_data:
             texts = [s[3] for s in span_data]
-            translations = await batch_translate(texts, source_lang, target_lang, batch_size=BATCH_SIZE)
+
+            def _on_batch_done(count, _page=page_idx):
+                if progress_callback:
+                    # Approximate: current page progress + previous pages
+                    page_frac = (_page + count / max(len(texts), 1)) / total
+                    progress_callback(int(page_frac * 90))
+
+            translations = await batch_translate(
+                texts, source_lang, target_lang, batch_size=BATCH_SIZE,
+                on_batch_done=_on_batch_done,
+            )
 
             for (bbox, fontsize, color, _), translated in zip(span_data, translations):
                 try:
@@ -67,8 +77,7 @@ async def translate_pdf(
                         new_page.insert_text((bbox.x0, bbox.y1), translated, fontsize=fontsize, color=color)
                     except Exception:
                         logger.warning("Failed to insert text at (%s, %s) on page %d", bbox.x0, bbox.y1, page_idx + 1)
-
-        if progress_callback:
+        elif progress_callback:
             progress_callback(int((page_idx + 1) / total * 90))
 
     out_bytes = out_doc.tobytes()

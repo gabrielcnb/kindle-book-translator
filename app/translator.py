@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from typing import Callable
 
 from deep_translator import GoogleTranslator
 from app import cache
@@ -39,9 +40,10 @@ LANGUAGES = {
 }
 
 MAX_CHUNK = 4500
-DELAY_BETWEEN_REQUESTS = 0.15
+DELAY_BETWEEN_REQUESTS = 0.05
 TRANSLATE_TIMEOUT = 30
 MAX_RETRIES = 2
+MAX_CONCURRENT = 5  # parallel translation requests
 
 # Batch translation constants
 BATCH_SEP = "KBTXSEP"
@@ -104,29 +106,41 @@ async def _translate_chunk(translator: GoogleTranslator, chunk: str) -> str:
     return chunk
 
 
+_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+
+async def _translate_chunk_cached(
+    translator: GoogleTranslator,
+    source_lang: str,
+    target_lang: str,
+    chunk: str,
+) -> str:
+    """Translate a single chunk with cache lookup and concurrency limit."""
+    if not chunk.strip():
+        return chunk
+
+    cached = cache.get(source_lang, target_lang, chunk)
+    if cached is not None:
+        return cached
+
+    async with _semaphore:
+        result = await _translate_chunk(translator, chunk)
+        await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
+
+    cache.set(source_lang, target_lang, chunk, result)
+    return result
+
+
 async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
     if not text or not text.strip():
         return text
 
     chunks = split_text(text)
-    translated_chunks: list[str] = []
-
     translator = GoogleTranslator(source=source_lang, target=target_lang)
 
-    for chunk in chunks:
-        if not chunk.strip():
-            translated_chunks.append(chunk)
-            continue
-
-        cached = cache.get(source_lang, target_lang, chunk)
-        if cached is not None:
-            translated_chunks.append(cached)
-            continue
-
-        result = await _translate_chunk(translator, chunk)
-        cache.set(source_lang, target_lang, chunk, result)
-        translated_chunks.append(result)
-        await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
+    translated_chunks = await asyncio.gather(
+        *(_translate_chunk_cached(translator, source_lang, target_lang, c) for c in chunks)
+    )
 
     return "\n".join(translated_chunks)
 
@@ -136,17 +150,22 @@ async def batch_translate(
     source_lang: str,
     target_lang: str,
     batch_size: int = BATCH_SIZE,
+    on_batch_done: Callable[[int], None] | None = None,
 ) -> list[str]:
     """Translate a list of texts in batches, preserving order.
-    Falls back to individual translation if separator is mangled."""
+    Falls back to individual translation if separator is mangled.
+    Calls on_batch_done(completed_count) after each batch finishes."""
     results = list(texts)
+    completed = 0
 
-    for batch_start in range(0, len(texts), batch_size):
-        batch = texts[batch_start : batch_start + batch_size]
-
+    async def _do_batch(batch_start: int, batch: list[str]):
+        nonlocal completed
         nonempty = [(i, t) for i, t in enumerate(batch) if t.strip()]
         if not nonempty:
-            continue
+            completed += len(batch)
+            if on_batch_done:
+                on_batch_done(completed)
+            return
 
         indices, nonempty_texts = zip(*nonempty)
 
@@ -163,5 +182,19 @@ async def batch_translate(
                 results[batch_start + global_i] = await translate_text(
                     nonempty_texts[local_i], source_lang, target_lang
                 )
+
+        completed += len(batch)
+        if on_batch_done:
+            on_batch_done(completed)
+
+    # Process batches with limited concurrency (2 batches at a time)
+    batch_sem = asyncio.Semaphore(2)
+    batch_ranges = list(range(0, len(texts), batch_size))
+
+    async def _limited_batch(start: int):
+        async with batch_sem:
+            await _do_batch(start, texts[start : start + batch_size])
+
+    await asyncio.gather(*(_limited_batch(s) for s in batch_ranges))
 
     return results

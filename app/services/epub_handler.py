@@ -72,6 +72,17 @@ async def translate_epub(
     items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
     total = max(len(items), 1)
 
+    # Count total blocks across all documents for granular progress
+    all_items_blocks: list[int] = []
+    total_blocks = 0
+    for item in items:
+        c = item.get_content()
+        s = BeautifulSoup(c, "lxml")
+        n = len(_collect_blocks(s))
+        all_items_blocks.append(n)
+        total_blocks += n
+    blocks_done = 0
+
     for doc_idx, item in enumerate(items):
         content = item.get_content()
         soup = BeautifulSoup(content, "lxml")
@@ -86,8 +97,9 @@ async def translate_epub(
 
         blocks = _collect_blocks(soup)
         if not blocks:
+            blocks_done += all_items_blocks[doc_idx]
             if progress_callback:
-                progress_callback(int((doc_idx + 1) / total * 90))
+                progress_callback(int(blocks_done / max(total_blocks, 1) * 90))
             continue
 
         # Extract text for all blocks at once
@@ -96,8 +108,16 @@ async def translate_epub(
             for _, text_nodes in blocks
         ]
 
+        # Granular progress: update as each batch within the chapter completes
+        def _on_batch_done(count, _base=blocks_done):
+            if progress_callback:
+                progress_callback(int((_base + count) / max(total_blocks, 1) * 90))
+
         # Batch-translate all blocks for this document
-        translations = await batch_translate(texts, source_lang, target_lang)
+        translations = await batch_translate(
+            texts, source_lang, target_lang, on_batch_done=_on_batch_done
+        )
+        blocks_done += len(blocks)
 
         # Apply translations back to DOM
         for (block, _), translated in zip(blocks, translations):
@@ -119,9 +139,6 @@ async def translate_epub(
             else:
                 block.clear()
                 block.string = translated
-
-        if progress_callback:
-            progress_callback(int((doc_idx + 1) / total * 90))
 
         item.set_content(str(soup).encode("utf-8"))
 

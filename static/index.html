@@ -339,24 +339,62 @@
 
   function listenSSE(job_id, label) {
     return new Promise((resolve, reject) => {
-      const es = new EventSource(`/progress/${job_id}`);
-      es.onmessage = e => {
-        const d = JSON.parse(e.data);
+      let pollTimer = null;
+      let done = false;
+
+      function handleEvent(d) {
+        if (done) return;
         if (d.heartbeat) return;
         if (d.status === 'running') {
           setProgress(d.progress);
           document.getElementById('progressText').textContent = `${label}… ${d.progress}%`;
         } else if (d.status === 'done') {
+          finish();
           setProgress(100);
           document.getElementById('progressText').textContent = 'Done!';
-          es.close();
           resolve(d.download_url);
         } else if (d.status === 'error') {
-          es.close();
+          finish();
           reject(new Error(d.error || 'Job failed'));
         }
-      };
-      es.onerror = () => { es.close(); reject(new Error('Connection lost')); };
+      }
+
+      function finish() {
+        done = true;
+        if (pollTimer) clearInterval(pollTimer);
+        if (es) es.close();
+      }
+
+      // Polling fallback — checks every 2s when SSE drops
+      function startPolling() {
+        if (pollTimer || done) return;
+        pollTimer = setInterval(async () => {
+          try {
+            const res = await fetch(`/status/${job_id}`);
+            if (!res.ok) return;
+            handleEvent(await res.json());
+          } catch { /* retry next interval */ }
+        }, 2000);
+      }
+
+      // SSE with auto-reconnect
+      let es = null;
+      function connectSSE() {
+        if (done) return;
+        es = new EventSource(`/progress/${job_id}`);
+        es.onmessage = e => {
+          try { handleEvent(JSON.parse(e.data)); } catch {}
+        };
+        es.onerror = () => {
+          es.close();
+          if (done) return;
+          // On disconnect: start polling and try SSE again after 3s
+          startPolling();
+          setTimeout(connectSSE, 3000);
+        };
+      }
+
+      connectSSE();
     });
   }
 

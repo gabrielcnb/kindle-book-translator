@@ -317,6 +317,20 @@ async def progress_stream(job_id: str):
     )
 
 
+@app.get("/status/{job_id}")
+async def job_status(job_id: str):
+    """Polling fallback for when SSE disconnects (e.g. mobile app switch)."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    result = {"progress": job.get("progress", 0), "status": job.get("status", "running")}
+    if job.get("status") == "done":
+        result["download_url"] = f"/download/{job_id}"
+    if job.get("status") == "error":
+        result["error"] = job.get("error", "")
+    return result
+
+
 @app.get("/download/{job_id}")
 async def download_result(job_id: str):
     job = jobs.get(job_id)
