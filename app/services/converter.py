@@ -5,11 +5,14 @@ Falls back to PyMuPDF / ebooklib if Calibre is not installed.
 
 import asyncio
 import io
+import logging
 import shutil
 import tempfile
 from pathlib import Path
 
 import fitz  # PyMuPDF
+
+logger = logging.getLogger(__name__)
 
 
 def calibre_available() -> bool:
@@ -37,9 +40,17 @@ async def convert_with_calibre(
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
             if proc.returncode != 0:
+                logger.warning("Calibre conversion failed (exit %d): %s", proc.returncode, stderr.decode(errors="replace")[:500])
                 return None
             return dst.read_bytes() if dst.exists() else None
-        except (asyncio.TimeoutError, FileNotFoundError, Exception):
+        except asyncio.TimeoutError:
+            logger.warning("Calibre conversion timed out after 300s")
+            return None
+        except FileNotFoundError:
+            logger.warning("ebook-convert not found in PATH")
+            return None
+        except Exception:
+            logger.warning("Calibre conversion error", exc_info=True)
             return None
 
 
@@ -75,7 +86,7 @@ async def epub_to_pdf(epub_bytes: bytes) -> bytes:
                     align=0,
                 )
     except Exception:
-        pass
+        logger.warning("EPUB to PDF fallback conversion failed", exc_info=True)
 
     return doc.tobytes()
 

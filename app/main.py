@@ -1,6 +1,9 @@
 import asyncio
 import json
+import logging
+import os
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -16,11 +19,16 @@ from app.services.converter import epub_to_pdf, pdf_to_epub, calibre_available
 from app.services.cover import extract_epub_cover, extract_pdf_cover
 from app import cache
 
-app = FastAPI(title="Kindle Book Translator", version="2.0.0")
+logger = logging.getLogger(__name__)
 
+VERSION = "2.0.0"
+
+app = FastAPI(title="Kindle Book Translator", version=VERSION)
+
+cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -32,9 +40,34 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 MAX_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_JOB_AGE = 3600  # 1 hour
 
 jobs: dict[str, dict] = {}
 job_queues: dict[str, asyncio.Queue] = {}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job cleanup
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _cleanup_old_jobs():
+    """Remove jobs older than MAX_JOB_AGE and delete their temp files."""
+    now = time.time()
+    expired = [
+        jid for jid, j in jobs.items()
+        if now - j.get("created_at", 0) > MAX_JOB_AGE
+        and j.get("status") in ("done", "error")
+    ]
+    for jid in expired:
+        file_path = jobs[jid].get("file_path")
+        if file_path:
+            try:
+                Path(file_path).unlink(missing_ok=True)
+            except Exception:
+                logger.warning("Failed to delete temp file: %s", file_path)
+        del jobs[jid]
+    if expired:
+        logger.info("Cleaned up %d expired jobs", len(expired))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -77,14 +110,15 @@ async def _run_translation(
 
         cache.flush()
 
-        jobs[job_id] = {
+        jobs[job_id].update({
             "status": "done", "progress": 100,
             "file_path": str(out_path), "filename": out_name, "media_type": media,
-        }
+        })
         _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
-        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e)}
+        logger.error("Translation job %s failed: %s", job_id, e, exc_info=True)
+        jobs[job_id].update({"status": "error", "progress": 0, "error": str(e)})
         _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
         job_queues.pop(job_id, None)
@@ -117,14 +151,15 @@ async def _run_conversion(
         out_path = TEMP_DIR / f"{job_id}{out_ext}"
         out_path.write_bytes(result)
 
-        jobs[job_id] = {
+        jobs[job_id].update({
             "status": "done", "progress": 100,
             "file_path": str(out_path), "filename": out_name, "media_type": media,
-        }
+        })
         _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
-        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e)}
+        logger.error("Conversion job %s failed: %s", job_id, e, exc_info=True)
+        jobs[job_id].update({"status": "error", "progress": 0, "error": str(e)})
         _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
         job_queues.pop(job_id, None)
@@ -149,7 +184,7 @@ async def info():
     return {
         "calibre_available": calibre_available(),
         "cache_stats": cache.stats(),
-        "version": "2.0.0",
+        "version": VERSION,
     }
 
 
@@ -193,8 +228,16 @@ async def start_translation(
     if ext not in (".epub", ".pdf"):
         raise HTTPException(400, "Only EPUB and PDF files are supported.")
 
+    if target_lang not in LANGUAGES:
+        raise HTTPException(400, f"Unsupported target language: {target_lang}")
+
+    if source_lang != "auto" and source_lang not in LANGUAGES:
+        raise HTTPException(400, f"Unsupported source language: {source_lang}")
+
+    _cleanup_old_jobs()
+
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "running", "progress": 0}
+    jobs[job_id] = {"status": "running", "progress": 0, "created_at": time.time()}
     job_queues[job_id] = asyncio.Queue()
 
     background_tasks.add_task(
@@ -225,8 +268,10 @@ async def start_conversion(
     if src_ext not in (".epub", ".pdf") or out_ext not in (".epub", ".pdf"):
         raise HTTPException(400, "Only EPUB and PDF are supported.")
 
+    _cleanup_old_jobs()
+
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "running", "progress": 0}
+    jobs[job_id] = {"status": "running", "progress": 0, "created_at": time.time()}
     job_queues[job_id] = asyncio.Queue()
 
     background_tasks.add_task(

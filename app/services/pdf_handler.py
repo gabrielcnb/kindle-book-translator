@@ -1,47 +1,13 @@
-import asyncio
-import io
-import re
-import zipfile
-import fitz  # PyMuPDF
+import logging
 from typing import Callable
-from app.translator import translate_text
 
-BATCH_SEP = "KBTXSEP"
-BATCH_SEP_RE = re.compile(re.escape(BATCH_SEP))
+import fitz  # PyMuPDF
+
+from app.translator import batch_translate
+
+logger = logging.getLogger(__name__)
+
 BATCH_SIZE = 15
-
-
-async def _batch_translate_spans(
-    texts: list[str],
-    source_lang: str,
-    target_lang: str,
-) -> list[str]:
-    """Translate a list of span texts in batches, preserving order."""
-    results = list(texts)
-
-    for batch_start in range(0, len(texts), BATCH_SIZE):
-        batch = texts[batch_start : batch_start + BATCH_SIZE]
-
-        nonempty = [(i, t) for i, t in enumerate(batch) if t.strip()]
-        if not nonempty:
-            continue
-
-        indices, nonempty_texts = zip(*nonempty)
-
-        joined = f" {BATCH_SEP} ".join(nonempty_texts)
-        translated_joined = await translate_text(joined, source_lang, target_lang)
-        parts = [p.strip() for p in BATCH_SEP_RE.split(translated_joined)]
-
-        if len(parts) == len(nonempty_texts):
-            for local_i, global_i in enumerate(indices):
-                results[batch_start + global_i] = parts[local_i]
-        else:
-            for local_i, global_i in enumerate(indices):
-                results[batch_start + global_i] = await translate_text(
-                    nonempty_texts[local_i], source_lang, target_lang
-                )
-
-    return results
 
 
 async def translate_pdf(
@@ -66,7 +32,7 @@ async def translate_pdf(
                 base_image = src_doc.extract_image(xref)
                 new_page.insert_image(img_rect, stream=base_image["image"])
             except Exception:
-                pass
+                logger.warning("Failed to copy image xref=%d on page %d", xref, page_idx + 1)
 
         # Collect all spans for this page
         span_data: list[tuple] = []  # (bbox, fontsize, color, text)
@@ -90,9 +56,8 @@ async def translate_pdf(
                     ))
 
         if span_data:
-            # Batch-translate all spans for the page at once
             texts = [s[3] for s in span_data]
-            translations = await _batch_translate_spans(texts, source_lang, target_lang)
+            translations = await batch_translate(texts, source_lang, target_lang, batch_size=BATCH_SIZE)
 
             for (bbox, fontsize, color, _), translated in zip(span_data, translations):
                 try:
@@ -101,7 +66,7 @@ async def translate_pdf(
                     try:
                         new_page.insert_text((bbox.x0, bbox.y1), translated, fontsize=fontsize, color=color)
                     except Exception:
-                        pass
+                        logger.warning("Failed to insert text at (%s, %s) on page %d", bbox.x0, bbox.y1, page_idx + 1)
 
         if progress_callback:
             progress_callback(int((page_idx + 1) / total * 90))
@@ -112,31 +77,3 @@ async def translate_pdf(
         progress_callback(100)
 
     return out_bytes
-
-
-async def epub_to_pdf(epub_bytes: bytes) -> bytes:
-    """Convert EPUB to simple PDF via text extraction."""
-    pages_text = []
-    try:
-        with zipfile.ZipFile(io.BytesIO(epub_bytes)) as z:
-            from bs4 import BeautifulSoup
-            for name in z.namelist():
-                if name.endswith((".html", ".xhtml", ".htm")):
-                    content = z.read(name)
-                    soup = BeautifulSoup(content, "lxml")
-                    text = soup.get_text(separator="\n")
-                    pages_text.append(text)
-    except Exception:
-        return b""
-
-    doc = fitz.open()
-    for text in pages_text:
-        page = doc.new_page()
-        page.insert_textbox(
-            fitz.Rect(50, 50, 550, 780),
-            text,
-            fontsize=11,
-            align=0,
-        )
-
-    return doc.tobytes()

@@ -1,10 +1,9 @@
 import io
-import re
 from typing import Callable
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup, NavigableString, Tag
-from app.translator import translate_text
+from app.translator import batch_translate
 
 SKIP_TAGS = frozenset({"script", "style", "code", "pre", "head", "title"})
 BLOCK_TAGS = frozenset({
@@ -12,10 +11,20 @@ BLOCK_TAGS = frozenset({
     "li", "td", "th", "dt", "dd", "blockquote", "figcaption",
 })
 
-# Separator that Google Translate preserves (treats as unknown acronym)
-BATCH_SEP = "KBTXSEP"
-BATCH_SEP_RE = re.compile(re.escape(BATCH_SEP))
-BATCH_SIZE = 12  # blocks per API call (reduces calls ~12x)
+BILINGUAL_CSS = """
+.original-text {
+    font-size: 0.82em;
+    color: #888;
+    font-style: italic;
+    display: block;
+    margin-bottom: 2px;
+    line-height: 1.4;
+}
+.translated-text {
+    display: block;
+    line-height: 1.6;
+}
+"""
 
 
 def _should_skip(node) -> bool:
@@ -52,44 +61,6 @@ def _collect_blocks(soup) -> list[tuple[Tag, list[NavigableString]]]:
     return blocks
 
 
-async def _batch_translate(
-    texts: list[str],
-    source_lang: str,
-    target_lang: str,
-) -> list[str]:
-    """Translate a list of texts in batches, preserving order.
-    Falls back to individual translation if separator is mangled."""
-    results = list(texts)  # copy, fill in-place
-
-    for batch_start in range(0, len(texts), BATCH_SIZE):
-        batch = texts[batch_start : batch_start + BATCH_SIZE]
-
-        # Only translate non-empty entries
-        nonempty = [(i, t) for i, t in enumerate(batch) if t.strip()]
-        if not nonempty:
-            continue
-
-        indices, nonempty_texts = zip(*nonempty)
-
-        joined = f" {BATCH_SEP} ".join(nonempty_texts)
-        translated_joined = await translate_text(joined, source_lang, target_lang)
-
-        # Split back — handle Google adding/removing spaces around separator
-        parts = [p.strip() for p in BATCH_SEP_RE.split(translated_joined)]
-
-        if len(parts) == len(nonempty_texts):
-            for local_i, global_i in enumerate(indices):
-                results[batch_start + global_i] = parts[local_i]
-        else:
-            # Fallback: translate individually
-            for local_i, global_i in enumerate(indices):
-                results[batch_start + global_i] = await translate_text(
-                    nonempty_texts[local_i], source_lang, target_lang
-                )
-
-    return results
-
-
 async def translate_epub(
     file_bytes: bytes,
     source_lang: str,
@@ -101,37 +72,17 @@ async def translate_epub(
     items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
     total = max(len(items), 1)
 
-    if bilingual:
-        css = epub.EpubItem(
-            uid="bilingual_css",
-            file_name="bilingual.css",
-            media_type="text/css",
-            content=b"""
-.original-text {
-    font-size: 0.82em;
-    color: #888;
-    font-style: italic;
-    display: block;
-    margin-bottom: 2px;
-    line-height: 1.4;
-}
-.translated-text {
-    display: block;
-    line-height: 1.6;
-}
-""",
-        )
-        book.add_item(css)
-
     for doc_idx, item in enumerate(items):
         content = item.get_content()
         soup = BeautifulSoup(content, "lxml")
 
         if bilingual:
-            soup.head.append(soup.new_tag(
-                "link", rel="stylesheet",
-                href="../bilingual.css", type="text/css"
-            ))
+            # Inject CSS inline via <style> tag to avoid path issues across EPUB structures
+            head = soup.find("head")
+            if head:
+                style_tag = soup.new_tag("style", type="text/css")
+                style_tag.string = BILINGUAL_CSS
+                head.append(style_tag)
 
         blocks = _collect_blocks(soup)
         if not blocks:
@@ -146,7 +97,7 @@ async def translate_epub(
         ]
 
         # Batch-translate all blocks for this document
-        translations = await _batch_translate(texts, source_lang, target_lang)
+        translations = await batch_translate(texts, source_lang, target_lang)
 
         # Apply translations back to DOM
         for (block, _), translated in zip(blocks, translations):

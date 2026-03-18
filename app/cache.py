@@ -1,16 +1,17 @@
 """
 Disk-backed translation cache.
-Key = MD5(source_lang + target_lang + text), value = translated string.
+Key = SHA256(source_lang + target_lang + text), value = translated string.
 Persists to JSON file; loaded into memory at startup for fast reads.
 """
 
 import hashlib
 import json
-import tempfile
+import logging
 from pathlib import Path
 
-# Use a stable directory under user home instead of OS tempdir (survives reboots)
+logger = logging.getLogger(__name__)
 
+# Use a stable directory under user home instead of OS tempdir (survives reboots)
 
 _cache_dir = Path.home() / ".book_translator"
 _cache_dir.mkdir(exist_ok=True)
@@ -26,14 +27,17 @@ def _load() -> None:
         if CACHE_FILE.exists():
             _cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
     except Exception:
+        logger.warning("Failed to load cache file, starting with empty cache", exc_info=True)
         _cache = {}
 
 
 def _save() -> None:
     try:
-        CACHE_FILE.write_text(json.dumps(_cache, ensure_ascii=False), encoding="utf-8")
+        tmp = CACHE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_cache, ensure_ascii=False), encoding="utf-8")
+        tmp.rename(CACHE_FILE)
     except Exception:
-        pass
+        logger.warning("Failed to save cache file", exc_info=True)
 
 
 _load()
