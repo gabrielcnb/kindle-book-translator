@@ -104,8 +104,6 @@ Browser → FastAPI →
 
 ## 🛣️ Roadmap
 
-- [ ] DeepL API support (higher quality translations)
-- [ ] LibreTranslate support (fully self-hosted, no external calls)
 - [x] Bilingual output (original + translation side by side)
 - [x] Translation memory (disk-backed cache)
 - [ ] DeepL API support (higher quality translations)
