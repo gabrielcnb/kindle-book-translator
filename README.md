@@ -83,16 +83,22 @@ Open **http://localhost:8000** in your browser.
 
 ```
 Browser → FastAPI →
-    ├── EPUB: ebooklib → parse HTML → translate text nodes → repack EPUB
+    ├── EPUB: ebooklib → parse HTML → translate text nodes (parallel) → repack EPUB
     └── PDF: PyMuPDF → extract text blocks → translate → rebuild PDF
 ```
+
+### Performance
+
+- EPUB chapters translated **in parallel** (`asyncio.gather`) — 3–5× faster than sequential
+- Up to **4 concurrent** Google Translate calls (semaphore prevents 429 errors)
+- Batch translation: **20 blocks per API call** (reduces total calls ~20×)
+- Disk-backed translation cache — repeated phrases translated instantly
 
 ### Limitations
 
 - Max file size: **50 MB**
 - PDF layout preservation is best-effort (complex multi-column layouts may shift)
-- Translation speed depends on book size (~1-3 minutes for a typical novel)
-- Rate limiting: small delays between API calls to avoid Google blocks
+- Translation speed: typically **30–90 seconds** for a standard novel (previously 3–5 min)
 
 ---
 
@@ -100,10 +106,12 @@ Browser → FastAPI →
 
 - [ ] DeepL API support (higher quality translations)
 - [ ] LibreTranslate support (fully self-hosted, no external calls)
-- [ ] Bilingual output (original + translation side by side)
+- [x] Bilingual output (original + translation side by side)
+- [x] Translation memory (disk-backed cache)
+- [ ] DeepL API support (higher quality translations)
+- [ ] LibreTranslate support (fully self-hosted, no external calls)
 - [ ] MOBI/AZW3 output format
 - [ ] Batch translation (multiple books at once)
-- [ ] Translation memory (cache repeated phrases)
 - [ ] Progress via WebSocket (real-time updates)
 
 ---

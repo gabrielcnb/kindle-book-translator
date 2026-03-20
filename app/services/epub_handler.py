@@ -1,3 +1,4 @@
+import asyncio
 import io
 import re
 from typing import Callable
@@ -15,7 +16,7 @@ BLOCK_TAGS = frozenset({
 # Separator that Google Translate preserves (treats as unknown acronym)
 BATCH_SEP = "KBTXSEP"
 BATCH_SEP_RE = re.compile(re.escape(BATCH_SEP))
-BATCH_SIZE = 12  # blocks per API call (reduces calls ~12x)
+BATCH_SIZE = 20  # blocks per API call (reduces calls ~20x)
 
 
 def _should_skip(node) -> bool:
@@ -123,56 +124,56 @@ async def translate_epub(
         )
         book.add_item(css)
 
-    for doc_idx, item in enumerate(items):
-        content = item.get_content()
-        soup = BeautifulSoup(content, "lxml")
+    completed = 0
 
-        if bilingual:
-            soup.head.append(soup.new_tag(
-                "link", rel="stylesheet",
-                href="../bilingual.css", type="text/css"
-            ))
+    async def _process_item(item):
+        nonlocal completed
+        try:
+            content = item.get_content()
+            soup = BeautifulSoup(content, "lxml")
 
-        blocks = _collect_blocks(soup)
-        if not blocks:
-            if progress_callback:
-                progress_callback(int((doc_idx + 1) / total * 90))
-            continue
-
-        # Extract text for all blocks at once
-        texts = [
-            " ".join(str(n).strip() for n in text_nodes if str(n).strip())
-            for _, text_nodes in blocks
-        ]
-
-        # Batch-translate all blocks for this document
-        translations = await _batch_translate(texts, source_lang, target_lang)
-
-        # Apply translations back to DOM
-        for (block, _), translated in zip(blocks, translations):
-            if not translated:
-                continue
             if bilingual:
-                orig_text = block.get_text(separator=" ").strip()
-                block.clear()
-                orig_span = soup.new_tag("span")
-                orig_span["class"] = "original-text"
-                orig_span.string = orig_text
+                soup.head.append(soup.new_tag(
+                    "link", rel="stylesheet",
+                    href="../bilingual.css", type="text/css"
+                ))
 
-                trans_span = soup.new_tag("span")
-                trans_span["class"] = "translated-text"
-                trans_span.string = translated
+            blocks = _collect_blocks(soup)
+            if blocks:
+                texts = [
+                    " ".join(str(n).strip() for n in text_nodes if str(n).strip())
+                    for _, text_nodes in blocks
+                ]
+                translations = await _batch_translate(texts, source_lang, target_lang)
 
-                block.append(orig_span)
-                block.append(trans_span)
-            else:
-                block.clear()
-                block.string = translated
+                for (block, _), translated in zip(blocks, translations):
+                    if not translated:
+                        continue
+                    if bilingual:
+                        orig_text = block.get_text(separator=" ").strip()
+                        block.clear()
+                        orig_span = soup.new_tag("span")
+                        orig_span["class"] = "original-text"
+                        orig_span.string = orig_text
+                        trans_span = soup.new_tag("span")
+                        trans_span["class"] = "translated-text"
+                        trans_span.string = translated
+                        block.append(orig_span)
+                        block.append(trans_span)
+                    else:
+                        block.clear()
+                        block.string = translated
 
+                item.set_content(str(soup).encode("utf-8"))
+        except Exception as e:
+            print(f"[epub_handler] item failed: {e}")
+
+        # asyncio is single-threaded; no lock needed for simple increment
+        completed += 1
         if progress_callback:
-            progress_callback(int((doc_idx + 1) / total * 90))
+            progress_callback(int(completed / total * 90))
 
-        item.set_content(str(soup).encode("utf-8"))
+    await asyncio.gather(*[_process_item(item) for item in items], return_exceptions=True)
 
     out = io.BytesIO()
     epub.write_epub(out, book)

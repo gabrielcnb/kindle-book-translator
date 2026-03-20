@@ -34,9 +34,19 @@ LANGUAGES = {
 }
 
 MAX_CHUNK = 4500
-DELAY_BETWEEN_REQUESTS = 0.15  # reduced from 0.4
+DELAY_BETWEEN_REQUESTS = 0.08  # between sequential chunks
 TRANSLATE_TIMEOUT = 30  # seconds per API call
 MAX_RETRIES = 2
+
+# Semaphore limiting concurrent Google Translate calls (avoids 429 on free API)
+_translate_sem: "asyncio.Semaphore | None" = None
+
+
+def _get_semaphore() -> "asyncio.Semaphore":
+    global _translate_sem
+    if _translate_sem is None:
+        _translate_sem = asyncio.Semaphore(4)
+    return _translate_sem
 
 
 def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
@@ -58,14 +68,16 @@ def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
 
 
 async def _translate_chunk(translator: GoogleTranslator, chunk: str) -> str:
-    """Translate a single chunk with timeout and retry."""
+    """Translate a single chunk with timeout and retry, rate-limited by semaphore."""
+    sem = _get_semaphore()
     last_exc: BaseException | None = None
     for attempt in range(MAX_RETRIES):
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(translator.translate, chunk),
-                timeout=TRANSLATE_TIMEOUT,
-            )
+            async with sem:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(translator.translate, chunk),
+                    timeout=TRANSLATE_TIMEOUT,
+                )
             return result or chunk
         except asyncio.TimeoutError as e:
             last_exc = e
@@ -75,7 +87,6 @@ async def _translate_chunk(translator: GoogleTranslator, chunk: str) -> str:
             last_exc = e
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(1.0 * (attempt + 1))
-    # Log failure and return original text as fallback
     print(f"[translator] chunk failed after {MAX_RETRIES} attempts: {last_exc}")
     return chunk
 
@@ -85,23 +96,19 @@ async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
         return text
 
     chunks = split_text(text)
-    translated_chunks: list[str] = []
 
-    translator = GoogleTranslator(source=source_lang, target=target_lang)
-
-    for chunk in chunks:
+    async def _translate_one(chunk: str) -> str:
         if not chunk.strip():
-            translated_chunks.append(chunk)
-            continue
-
+            return chunk
         cached = cache.get(source_lang, target_lang, chunk)
         if cached is not None:
-            translated_chunks.append(cached)
-            continue
-
-        result = await _translate_chunk(translator, chunk)
+            return cached
+        # Create per-task to avoid shared mutable state across threads
+        tr = GoogleTranslator(source=source_lang, target=target_lang)
+        result = await _translate_chunk(tr, chunk)
         cache.set(source_lang, target_lang, chunk, result)
-        translated_chunks.append(result)
-        await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
+        return result
 
+    # Translate all chunks concurrently (semaphore in _translate_chunk limits rate)
+    translated_chunks = await asyncio.gather(*[_translate_one(c) for c in chunks])
     return " ".join(translated_chunks)
