@@ -18,18 +18,12 @@
 - **Beautiful UI** — drag-and-drop, progress bar, instant download
 - **Docker-ready** — one command to run anywhere
 
-## 🖥️ Demo
-
-![screenshot](https://raw.githubusercontent.com/placeholder/kindle-book-translator/main/docs/screenshot.png)
-
----
-
 ## 🚀 Quick Start
 
 ### With Docker (recommended)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/kindle-book-translator
+git clone https://github.com/gabrielcnb/kindle-book-translator
 cd kindle-book-translator
 docker-compose up --build
 ```
@@ -39,7 +33,7 @@ Open **http://localhost:8000** in your browser.
 ### Without Docker
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/kindle-book-translator
+git clone https://github.com/gabrielcnb/kindle-book-translator
 cd kindle-book-translator
 
 python -m venv venv
