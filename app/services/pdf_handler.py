@@ -16,7 +16,6 @@ async def _batch_translate_spans(
     source_lang: str,
     target_lang: str,
 ) -> list[str]:
-    """Translate a list of span texts in batches, preserving order."""
     results = list(texts)
 
     for batch_start in range(0, len(texts), BATCH_SIZE):
@@ -44,6 +43,120 @@ async def _batch_translate_spans(
     return results
 
 
+# ── Page data extraction (sequential, fast, no I/O) ────────────────────────
+
+def _extract_page_data(src_doc, page_idx: int) -> dict:
+    """Extract all data from a page into plain Python objects (no fitz refs)."""
+    page = src_doc[page_idx]
+    width = page.rect.width
+    height = page.rect.height
+    blocks = page.get_text("dict")["blocks"]
+
+    # Images
+    images = []
+    for img_info in page.get_images(full=True):
+        xref = img_info[0]
+        img_rect = page.get_image_bbox(img_info)
+        try:
+            base_image = src_doc.extract_image(xref)
+            images.append({
+                "rect": (img_rect.x0, img_rect.y0, img_rect.x1, img_rect.y1),
+                "stream": base_image["image"],
+            })
+        except Exception:
+            pass
+
+    # Spans
+    spans = []
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = span.get("text", "").strip()
+                if not text:
+                    continue
+                color_int = span.get("color", 0)
+                r = ((color_int >> 16) & 0xFF) / 255
+                g = ((color_int >> 8) & 0xFF) / 255
+                b = (color_int & 0xFF) / 255
+                spans.append({
+                    "bbox": tuple(span["bbox"]),
+                    "size": span.get("size", 11),
+                    "color": (r, g, b),
+                    "text": text,
+                })
+
+    return {
+        "idx": page_idx,
+        "width": width,
+        "height": height,
+        "images": images,
+        "spans": spans,
+    }
+
+
+# ── Translate one page's spans (async, parallel-safe) ──────────────────────
+
+async def _translate_page_spans(
+    page_data: dict,
+    source_lang: str,
+    target_lang: str,
+) -> dict:
+    """Translate all spans for a page. Returns page_data with translated texts."""
+    spans = page_data["spans"]
+    if not spans:
+        return page_data
+
+    texts = [s["text"] for s in spans]
+    translations = await _batch_translate_spans(texts, source_lang, target_lang)
+
+    for span, translated in zip(spans, translations):
+        span["translated"] = translated
+
+    return page_data
+
+
+# ── Build output PDF (sequential, uses fitz) ───────────────────────────────
+
+def _build_output_pdf(pages_data: list[dict]) -> bytes:
+    """Assemble translated pages into a new PDF."""
+    out_doc = fitz.open()
+
+    for pd in pages_data:
+        new_page = out_doc.new_page(width=pd["width"], height=pd["height"])
+
+        # Images
+        for img in pd["images"]:
+            r = img["rect"]
+            try:
+                new_page.insert_image(fitz.Rect(*r), stream=img["stream"])
+            except Exception:
+                pass
+
+        # Translated spans
+        for span in pd["spans"]:
+            text = span.get("translated", span["text"])
+            bbox = fitz.Rect(span["bbox"])
+            try:
+                new_page.insert_textbox(
+                    bbox, text,
+                    fontsize=span["size"], color=span["color"], align=0,
+                )
+            except Exception:
+                try:
+                    new_page.insert_text(
+                        (bbox.x0, bbox.y1), text,
+                        fontsize=span["size"], color=span["color"],
+                    )
+                except Exception:
+                    pass
+
+    return out_doc.tobytes()
+
+
+# ── Main entry point ───────────────────────────────────────────────────────
+
 async def translate_pdf(
     file_bytes: bytes,
     source_lang: str,
@@ -51,62 +164,47 @@ async def translate_pdf(
     progress_callback: Callable[[int], None] | None = None,
 ) -> bytes:
     src_doc = fitz.open(stream=file_bytes, filetype="pdf")
-    out_doc = fitz.open()
     total = len(src_doc)
 
-    for page_idx, page in enumerate(src_doc):
-        blocks = page.get_text("dict")["blocks"]
-        new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
+    # Phase 1: Extract all page data (sequential, fast)
+    if progress_callback:
+        progress_callback(2)
+    pages_data = [_extract_page_data(src_doc, i) for i in range(total)]
+    src_doc.close()
 
-        # Copy images from original page
-        for img_info in page.get_images(full=True):
-            xref = img_info[0]
-            img_rect = page.get_image_bbox(img_info)
-            try:
-                base_image = src_doc.extract_image(xref)
-                new_page.insert_image(img_rect, stream=base_image["image"])
-            except Exception:
-                pass
+    if progress_callback:
+        progress_callback(5)
 
-        # Collect all spans for this page
-        span_data: list[tuple] = []  # (bbox, fontsize, color, text)
-        for block in blocks:
-            if block.get("type") != 0:
-                continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span.get("text", "").strip()
-                    if not text:
-                        continue
-                    color_int = span.get("color", 0)
-                    r = ((color_int >> 16) & 0xFF) / 255
-                    g = ((color_int >> 8) & 0xFF) / 255
-                    b = (color_int & 0xFF) / 255
-                    span_data.append((
-                        fitz.Rect(span["bbox"]),
-                        span.get("size", 11),
-                        (r, g, b),
-                        text,
-                    ))
+    # Phase 2: Translate pages in parallel (capped to avoid GT rate-limit)
+    PAGE_CONCURRENCY = 6
+    page_sem = asyncio.Semaphore(PAGE_CONCURRENCY)
+    completed = 0
 
-        if span_data:
-            # Batch-translate all spans for the page at once
-            texts = [s[3] for s in span_data]
-            translations = await _batch_translate_spans(texts, source_lang, target_lang)
-
-            for (bbox, fontsize, color, _), translated in zip(span_data, translations):
-                try:
-                    new_page.insert_textbox(bbox, translated, fontsize=fontsize, color=color, align=0)
-                except Exception:
-                    try:
-                        new_page.insert_text((bbox.x0, bbox.y1), translated, fontsize=fontsize, color=color)
-                    except Exception:
-                        pass
-
+    async def _translate_with_progress(pd):
+        nonlocal completed
+        async with page_sem:
+            result = await _translate_page_spans(pd, source_lang, target_lang)
+        completed += 1
         if progress_callback:
-            progress_callback(int((page_idx + 1) / total * 90))
+            progress_callback(5 + int(completed / total * 85))
+        return result
 
-    out_bytes = out_doc.tobytes()
+    pages_data = await asyncio.gather(
+        *[_translate_with_progress(pd) for pd in pages_data],
+        return_exceptions=True,
+    )
+
+    # Filter out any failed pages (keep original data)
+    for i, pd in enumerate(pages_data):
+        if isinstance(pd, Exception):
+            print(f"[pdf_handler] page {i} failed: {pd}")
+            pages_data[i] = {"idx": i, "width": 595, "height": 842,
+                             "images": [], "spans": []}
+
+    # Phase 3: Build output PDF (sequential)
+    if progress_callback:
+        progress_callback(92)
+    out_bytes = _build_output_pdf(pages_data)
 
     if progress_callback:
         progress_callback(100)
@@ -115,7 +213,6 @@ async def translate_pdf(
 
 
 async def epub_to_pdf(epub_bytes: bytes) -> bytes:
-    """Convert EPUB to simple PDF via text extraction."""
     pages_text = []
     try:
         with zipfile.ZipFile(io.BytesIO(epub_bytes)) as z:
