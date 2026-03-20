@@ -12,9 +12,7 @@ from app.services.cover import extract_pdf_cover
 CHUNK_TARGET = 4000
 FONT_SIZE = 13
 TITLE_FONT_SIZE = 18
-CHARS_PER_PAGE = 2000
 
-# Chapter detection pattern (matches "CHAPTER X", "CAPITULO X", etc.)
 CHAPTER_RE = re.compile(
     r'^(CHAPTER|CAPITULO|CAP[ÍI]TULO|PART|PARTE)\s+[\dIVXLCDM]+',
     re.IGNORECASE | re.MULTILINE,
@@ -23,16 +21,13 @@ CHAPTER_RE = re.compile(
 # ── Font resolution ────────────────────────────────────────────────────────
 
 _FONT_PATHS = [
-    # Linux (Calibre/Debian)
     "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
     "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
     "/usr/share/fonts/liberation-serif/LiberationSerif-Regular.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
     "/usr/share/fonts/TTF/LiberationSerif-Regular.ttf",
-    # Windows
     "C:/Windows/Fonts/georgia.ttf",
     "C:/Windows/Fonts/times.ttf",
-    "C:/Windows/Fonts/cambria.ttc",
 ]
 
 _BOLD_FONT_PATHS = [
@@ -52,6 +47,90 @@ def _find_font(paths: list[str]) -> str | None:
     return None
 
 
+# ── Extraction ─────────────────────────────────────────────────────────────
+
+def _extract_all(file_bytes: bytes) -> dict:
+    """Extract text blocks, images, and metadata from PDF."""
+    src_doc = fitz.open(stream=file_bytes, filetype="pdf")
+    page_w = src_doc[0].rect.width if len(src_doc) > 0 else 612
+    page_h = src_doc[0].rect.height if len(src_doc) > 0 else 792
+
+    pages = []
+    all_images = {}  # page_idx -> list of image dicts
+
+    for page_idx in range(len(src_doc)):
+        page = src_doc[page_idx]
+
+        # Extract text using blocks (preserves paragraph structure)
+        blocks = page.get_text("blocks")
+        paragraphs = []
+        for b in blocks:
+            if b[6] == 0:  # text block
+                # b[4] is the text, join soft-wrapped lines into real paragraphs
+                raw = b[4].strip()
+                if raw:
+                    # Join lines that are soft-wraps (line ends without period/quote)
+                    lines = raw.split("\n")
+                    joined = ""
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            if joined:
+                                paragraphs.append(joined)
+                                joined = ""
+                            continue
+                        if joined:
+                            joined += " " + line
+                        else:
+                            joined = line
+                    if joined:
+                        paragraphs.append(joined)
+
+        pages.append(paragraphs)
+
+        # Extract images (skip cover page 0, handled separately)
+        if page_idx > 0:
+            page_images = []
+            for img_info in page.get_images(full=True):
+                xref = img_info[0]
+                try:
+                    img_rect = page.get_image_bbox(img_info)
+                    base_image = src_doc.extract_image(xref)
+                    if base_image and base_image.get("image"):
+                        page_images.append({
+                            "stream": base_image["image"],
+                            "width": base_image.get("width", 100),
+                            "height": base_image.get("height", 100),
+                            "rect_y": img_rect.y0,  # vertical position
+                            "is_full_page": (
+                                img_rect.width > page_w * 0.8
+                                and img_rect.height > page_h * 0.8
+                            ),
+                        })
+                except Exception:
+                    pass
+            if page_images:
+                all_images[page_idx] = page_images
+
+    src_doc.close()
+
+    # Build text with image insertion markers
+    # Format: list of (type, content) where type is "text" or "images"
+    content_stream = []
+    for page_idx, paragraphs in enumerate(pages):
+        # Insert images associated with this page BEFORE its text
+        if page_idx in all_images:
+            content_stream.append(("images", all_images[page_idx]))
+        for para in paragraphs:
+            content_stream.append(("text", para))
+
+    return {
+        "page_w": page_w,
+        "page_h": page_h,
+        "content_stream": content_stream,
+    }
+
+
 # ── Main translation ───────────────────────────────────────────────────────
 
 async def translate_pdf(
@@ -63,40 +142,41 @@ async def translate_pdf(
     if progress_callback:
         progress_callback(2)
 
-    # Phase 1: Extract original page size, cover, and text
+    # Phase 1: Extract
     cover_img = extract_pdf_cover(file_bytes)
-    src_doc = fitz.open(stream=file_bytes, filetype="pdf")
-
-    # Match original page dimensions
-    page_w = src_doc[0].rect.width if len(src_doc) > 0 else 612
-    page_h = src_doc[0].rect.height if len(src_doc) > 0 else 792
-
-    pages_text = []
-    for page in src_doc:
-        text = page.get_text("text").strip()
-        if text:
-            pages_text.append(text)
-    src_doc.close()
+    data = _extract_all(file_bytes)
+    page_w = data["page_w"]
+    page_h = data["page_h"]
+    content_stream = data["content_stream"]
 
     if progress_callback:
         progress_callback(5)
 
-    # Phase 2: Merge into translation chunks
+    # Phase 2: Collect all text, merge into chunks for translation
+    text_items = [(i, item[1]) for i, item in enumerate(content_stream) if item[0] == "text"]
+    all_texts = [t for _, t in text_items]
+
+    # Merge into chunks respecting ~4000 chars
     chunks = []
-    current = ""
-    for pt in pages_text:
-        if len(current) + len(pt) + 4 > CHUNK_TARGET:
-            if current:
-                chunks.append(current)
-            current = pt
+    chunk_map = []  # maps chunk_idx -> list of text_item indices
+    current_chunk = ""
+    current_indices = []
+
+    for idx, text in enumerate(all_texts):
+        if len(current_chunk) + len(text) + 4 > CHUNK_TARGET and current_chunk:
+            chunks.append(current_chunk)
+            chunk_map.append(current_indices)
+            current_chunk = text
+            current_indices = [idx]
         else:
-            current += f"\n\n{pt}" if current else pt
-    if current:
-        chunks.append(current)
+            current_chunk += f"\n\n{text}" if current_chunk else text
+            current_indices.append(idx)
+
+    if current_chunk:
+        chunks.append(current_chunk)
+        chunk_map.append(current_indices)
 
     total_chunks = max(len(chunks), 1)
-
-    # Phase 3: Translate in parallel
     completed = 0
 
     async def _translate_chunk(chunk):
@@ -104,109 +184,148 @@ async def translate_pdf(
         result = await translate_text(chunk, source_lang, target_lang)
         completed += 1
         if progress_callback:
-            progress_callback(5 + int(completed / total_chunks * 82))
+            progress_callback(5 + int(completed / total_chunks * 80))
         return result
 
-    translations = await asyncio.gather(
-        *[_translate_chunk(c) for c in chunks]
-    )
+    translations = await asyncio.gather(*[_translate_chunk(c) for c in chunks])
 
     if progress_callback:
-        progress_callback(90)
+        progress_callback(88)
+
+    # Phase 3: Split translations back to individual paragraphs
+    translated_texts = [""] * len(all_texts)
+    for chunk_idx, indices in enumerate(chunk_map):
+        translated = translations[chunk_idx]
+        if len(indices) == 1:
+            translated_texts[indices[0]] = translated
+        else:
+            # Split by double newline to recover paragraphs
+            parts = translated.split("\n\n")
+            for i, text_idx in enumerate(indices):
+                if i < len(parts):
+                    translated_texts[text_idx] = parts[i]
+                else:
+                    translated_texts[text_idx] = all_texts[text_idx]
+
+    # Replace text items in content_stream with translations
+    text_counter = 0
+    for i, item in enumerate(content_stream):
+        if item[0] == "text":
+            content_stream[i] = ("text", translated_texts[text_counter])
+            text_counter += 1
+
+    if progress_callback:
+        progress_callback(92)
 
     # Phase 4: Build PDF
-    translated_text = "\n\n".join(translations)
-    out_doc = fitz.open()
-
-    # Resolve fonts
     font_path = _find_font(_FONT_PATHS)
     bold_path = _find_font(_BOLD_FONT_PATHS)
-
-    # Margins (1 inch = 72pt)
     margin = 72
-    text_rect = fitz.Rect(margin, margin, page_w - margin, page_h - margin)
+    text_rect_w = page_w - 2 * margin
+    max_y = page_h - margin
 
-    # Cover page
+    out_doc = fitz.open()
+
+    # Cover
     if cover_img:
         try:
-            cover_page = out_doc.new_page(width=page_w, height=page_h)
-            cover_page.insert_image(
-                fitz.Rect(0, 0, page_w, page_h), stream=cover_img
-            )
+            cp = out_doc.new_page(width=page_w, height=page_h)
+            cp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=cover_img)
         except Exception:
             pass
 
-    # Split text into paragraphs and paginate
-    paragraphs = translated_text.split("\n")
-    paragraphs = [p for p in paragraphs if p.strip()]
-
+    current_page = out_doc.new_page(width=page_w, height=page_h)
     current_y = margin
-    current_page = None
 
     def _new_page():
         nonlocal current_page, current_y
         current_page = out_doc.new_page(width=page_w, height=page_h)
         current_y = margin
-        return current_page
 
-    _new_page()
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-
-        is_chapter = bool(CHAPTER_RE.match(para))
-
-        # Chapter heading: new page + bigger font
-        if is_chapter:
-            _new_page()
-            current_y += 60  # extra top margin for chapter
-
-        # Estimate height needed
-        fs = TITLE_FONT_SIZE if is_chapter else FONT_SIZE
-        text_width = text_rect.width
-
-        # Rough estimate: chars per line and lines needed
-        avg_char_width = fs * 0.5
-        chars_per_line = max(int(text_width / avg_char_width), 1)
-        lines = max(len(para) / chars_per_line, 1)
-        line_height = fs * 1.5
-        needed_height = lines * line_height + (12 if not is_chapter else 24)
-
-        # New page if not enough space
-        if current_y + needed_height > page_h - margin:
-            _new_page()
-
-        para_rect = fitz.Rect(margin, current_y, page_w - margin, page_h - margin)
-
-        # Insert text with font
-        kwargs = {"fontsize": fs, "align": fitz.TEXT_ALIGN_LEFT}
-        if is_chapter:
-            kwargs["align"] = fitz.TEXT_ALIGN_CENTER
-
-        if font_path and not is_chapter:
-            kwargs["fontname"] = "serif"
-            kwargs["fontfile"] = font_path
-        elif bold_path and is_chapter:
+    def _font_kwargs(is_title=False):
+        kwargs = {}
+        if is_title and bold_path:
             kwargs["fontname"] = "serifbold"
             kwargs["fontfile"] = bold_path
-        elif font_path and is_chapter:
+        elif font_path:
             kwargs["fontname"] = "serif"
             kwargs["fontfile"] = font_path
         else:
             kwargs["fontname"] = "helv"
             kwargs["encoding"] = fitz.TEXT_ENCODING_LATIN
+        return kwargs
 
-        rc = current_page.insert_textbox(para_rect, para, **kwargs)
+    for item_type, content in content_stream:
+        if item_type == "images":
+            for img in content:
+                if img["is_full_page"]:
+                    # Full-page image on its own page
+                    _new_page()
+                    try:
+                        current_page.insert_image(
+                            fitz.Rect(0, 0, page_w, page_h),
+                            stream=img["stream"],
+                        )
+                    except Exception:
+                        pass
+                    _new_page()
+                else:
+                    # Inline image — fit to width, maintain aspect ratio
+                    iw = img["width"]
+                    ih = img["height"]
+                    max_img_w = text_rect_w
+                    max_img_h = 300  # cap height
+                    scale = min(max_img_w / iw, max_img_h / ih, 1.0)
+                    draw_w = iw * scale
+                    draw_h = ih * scale
 
-        # rc is remaining height (positive = space left, negative = overflow)
-        if rc >= 0:
-            used_height = (page_h - margin - current_y) - rc
-            current_y += used_height + 8  # 8pt paragraph spacing
-        else:
-            # Text overflowed — move to next page, simplified: just advance
-            current_y = page_h  # force new page on next paragraph
+                    if current_y + draw_h + 20 > max_y:
+                        _new_page()
+
+                    # Center horizontally
+                    x0 = margin + (text_rect_w - draw_w) / 2
+                    img_rect = fitz.Rect(x0, current_y, x0 + draw_w, current_y + draw_h)
+                    try:
+                        current_page.insert_image(img_rect, stream=img["stream"])
+                    except Exception:
+                        pass
+                    current_y += draw_h + 12
+
+        elif item_type == "text":
+            para = content.strip()
+            if not para:
+                continue
+
+            is_chapter = bool(CHAPTER_RE.match(para))
+
+            if is_chapter:
+                _new_page()
+                current_y += 60
+
+            fs = TITLE_FONT_SIZE if is_chapter else FONT_SIZE
+            align = fitz.TEXT_ALIGN_CENTER if is_chapter else fitz.TEXT_ALIGN_LEFT
+
+            # Estimate height
+            avg_char_w = fs * 0.48
+            chars_per_line = max(int(text_rect_w / avg_char_w), 1)
+            num_lines = max(len(para) / chars_per_line, 1)
+            needed = num_lines * fs * 1.5 + 10
+
+            if current_y + needed > max_y:
+                _new_page()
+
+            para_rect = fitz.Rect(margin, current_y, page_w - margin, max_y)
+            kwargs = _font_kwargs(is_chapter)
+            rc = current_page.insert_textbox(
+                para_rect, para, fontsize=fs, align=align, **kwargs
+            )
+
+            if rc >= 0:
+                used = (max_y - current_y) - rc
+                current_y += used + 8
+            else:
+                # Overflow — text didn't fit. Insert what we can, continue on next page
+                current_y = max_y + 1
 
     result = out_doc.tobytes()
 
