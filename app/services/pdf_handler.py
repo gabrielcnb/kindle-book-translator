@@ -123,12 +123,13 @@ async def translate_pdf(
             if block.get("type") != 0:
                 continue
 
-            # Collect text and dominant style
+            # Collect text and dominant style (majority voting, not OR)
             lines_text = []
-            dominant_flags = 0
             dominant_size = 0
             dominant_color = 0
             span_count = 0
+            italic_count = 0
+            bold_count = 0
 
             for line in block.get("lines", []):
                 line_parts = []
@@ -138,7 +139,11 @@ async def translate_pdf(
                         line_parts.append(text)
                         dominant_size += span.get("size", 11)
                         dominant_color += span.get("color", 0)
-                        dominant_flags |= span.get("flags", 0)
+                        flags = span.get("flags", 0)
+                        if flags & 2:
+                            italic_count += 1
+                        if flags & (1 << 4):
+                            bold_count += 1
                         span_count += 1
                 if line_parts:
                     lines_text.append(" ".join(line_parts))
@@ -149,13 +154,19 @@ async def translate_pdf(
 
             avg_size = dominant_size / span_count if span_count else 11
             avg_color = int(dominant_color / span_count) if span_count else 0
+            # Majority voting for flags
+            majority_flags = 0
+            if italic_count > span_count / 2:
+                majority_flags |= 2
+            if bold_count > span_count / 2:
+                majority_flags |= (1 << 4)
 
             blocks_data.append({
                 "bbox": block["bbox"],
                 "text": full_text,
                 "size": avg_size,
                 "color": avg_color,
-                "flags": dominant_flags,
+                "flags": majority_flags,
                 "align": _detect_alignment(block["bbox"], page_width, full_text),
             })
             text_index_map.append((page_idx, len(blocks_data) - 1))
@@ -300,10 +311,12 @@ async def translate_pdf(
                 kwargs["fontname"] = "helv"
                 kwargs["encoding"] = fitz.TEXT_ENCODING_LATIN
 
-            # Expand rect if translated text is wider than original bbox
-            min_width = len(translated) * font_size * 0.5
+            # Expand rect width if needed, but never past page margins
+            page_right = out_doc[page_idx].rect.width - 50  # right margin
+            min_width = len(translated) * font_size * 0.45
             if rect.width < min_width:
-                rect = fitz.Rect(rect.x0, rect.y0, max(rect.x1, rect.x0 + min_width), rect.y1)
+                new_x1 = min(rect.x0 + min_width, page_right)
+                rect = fitz.Rect(rect.x0, rect.y0, new_x1, rect.y1)
 
             rc = page.insert_textbox(rect, translated, **kwargs)
 
