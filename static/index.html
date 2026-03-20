@@ -201,6 +201,8 @@
     .progress-label { display: flex; justify-content: space-between; font-size: .78rem; color: var(--muted); margin-bottom: .3rem; }
     .progress-bg { background: var(--border); border-radius: 99px; height: 5px; overflow: hidden; }
     .progress-fill { height: 100%; background: var(--accent); border-radius: 99px; transition: width .5s ease; width: 0%; }
+    .timer-row { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-top: .3rem; }
+    .timer-row span:empty { display: none; }
 
     .status { margin-top: .75rem; font-size: .85rem; text-align: center; min-height: 1.1em; }
     .status.error { color: var(--error); }
@@ -341,6 +343,10 @@
       <span id="progressPct">0%</span>
     </div>
     <div class="progress-bg"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="timer-row" id="timerRow">
+      <span id="timerElapsed">0:00</span>
+      <span id="timerEta"></span>
+    </div>
   </div>
 
   <div class="status" id="status"></div>
@@ -364,6 +370,12 @@
 <script>
   let selectedFile = null;
   let activeTab = 'translate';
+
+  // Timer + ETA state
+  let timerStart = null;
+  let timerInterval = null;
+  let smoothedEta = null;
+  const ETA_ALPHA = 0.3; // exponential moving average smoothing
 
   // Load languages
   fetch('/languages').then(r => r.json()).then(({ languages }) => {
@@ -475,6 +487,7 @@
     setRunning(true);
     resetProgress(label + '…');
     showStatus('');
+    startTimer();
     try {
       const res = await fetch(endpoint, { method: 'POST', body: formData });
       if (!res.ok) {
@@ -483,9 +496,11 @@
       }
       const { job_id } = await res.json();
       const downloadUrl = await listenSSE(job_id, label);
+      stopTimer(true);
       await downloadFile(downloadUrl);
       showStatus('Done! Download started.', 'success');
     } catch (err) {
+      stopTimer(false);
       showStatus(err.message, 'error');
       document.getElementById('progressText').textContent = 'Error';
     } finally {
@@ -558,12 +573,61 @@
   function setProgress(val) {
     document.getElementById('progressFill').style.width = val + '%';
     document.getElementById('progressPct').textContent = Math.round(val) + '%';
+    updateEta(val);
   }
 
   function showStatus(msg, type = '') {
     const el = document.getElementById('status');
     el.textContent = msg;
     el.className = 'status ' + type;
+  }
+
+  function fmtTime(sec) {
+    sec = Math.round(sec);
+    if (sec < 0) sec = 0;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m + ':' + String(s).padStart(2, '0');
+  }
+
+  function startTimer() {
+    timerStart = Date.now();
+    smoothedEta = null;
+    document.getElementById('timerElapsed').textContent = '0:00';
+    document.getElementById('timerEta').textContent = '';
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      if (!timerStart) return;
+      const elapsed = (Date.now() - timerStart) / 1000;
+      document.getElementById('timerElapsed').textContent = fmtTime(elapsed);
+    }, 1000);
+  }
+
+  function stopTimer(showTotal) {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = null;
+    if (showTotal && timerStart) {
+      const total = (Date.now() - timerStart) / 1000;
+      document.getElementById('timerElapsed').textContent = 'Completed in ' + fmtTime(total);
+    }
+    document.getElementById('timerEta').textContent = '';
+    timerStart = null;
+  }
+
+  function updateEta(progress) {
+    if (!timerStart || progress < 5) {
+      document.getElementById('timerEta').textContent = '';
+      return;
+    }
+    const elapsed = (Date.now() - timerStart) / 1000;
+    const rawEta = (elapsed / progress) * (100 - progress);
+    // Exponential moving average
+    if (smoothedEta === null) {
+      smoothedEta = rawEta;
+    } else {
+      smoothedEta = ETA_ALPHA * rawEta + (1 - ETA_ALPHA) * smoothedEta;
+    }
+    document.getElementById('timerEta').textContent = '~' + fmtTime(smoothedEta) + ' remaining';
   }
 
   function fmtSize(b) {
