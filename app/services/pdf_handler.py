@@ -18,6 +18,7 @@ CHAPTER_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+
 # ── Font resolution ────────────────────────────────────────────────────────
 
 _FONT_PATHS = [
@@ -66,10 +67,34 @@ def _extract_all(file_bytes: bytes) -> dict:
         paragraphs = []
         for b in blocks:
             if b[6] == 0:  # text block
-                # b[4] is the text, join soft-wrapped lines into real paragraphs
                 raw = b[4].strip()
-                if raw:
-                    # Join lines that are soft-wraps (line ends without period/quote)
+                if not raw:
+                    continue
+
+                # If block starts with chapter heading, split title from body
+                if CHAPTER_RE.match(raw):
+                    first_nl = raw.find("\n")
+                    if first_nl > 0:
+                        paragraphs.append(raw[:first_nl].strip())  # title
+                        body = raw[first_nl:].strip()
+                        if body:
+                            # Join remaining soft-wrapped lines
+                            lines = body.split("\n")
+                            joined = ""
+                            for line in lines:
+                                line = line.strip()
+                                if not line:
+                                    if joined:
+                                        paragraphs.append(joined)
+                                        joined = ""
+                                    continue
+                                joined = (joined + " " + line) if joined else line
+                            if joined:
+                                paragraphs.append(joined)
+                    else:
+                        paragraphs.append(raw)
+                else:
+                    # Normal block: join soft-wrapped lines
                     lines = raw.split("\n")
                     joined = ""
                     for line in lines:
@@ -79,10 +104,7 @@ def _extract_all(file_bytes: bytes) -> dict:
                                 paragraphs.append(joined)
                                 joined = ""
                             continue
-                        if joined:
-                            joined += " " + line
-                        else:
-                            joined = line
+                        joined = (joined + " " + line) if joined else line
                     if joined:
                         paragraphs.append(joined)
 
@@ -114,15 +136,33 @@ def _extract_all(file_bytes: bytes) -> dict:
 
     src_doc.close()
 
-    # Build text with image insertion markers
-    # Format: list of (type, content) where type is "text" or "images"
+    # Build content stream: list of (type, content)
+    # Types: "text", "images", "chapter_title"
     content_stream = []
     for page_idx, paragraphs in enumerate(pages):
-        # Insert images associated with this page BEFORE its text
         if page_idx in all_images:
             content_stream.append(("images", all_images[page_idx]))
         for para in paragraphs:
-            content_stream.append(("text", para))
+            # Detect chapter headings and split title from body
+            if CHAPTER_RE.match(para):
+                # Split: first line/sentence is the title, rest is body
+                # In the original PDF, title is on its own line within the block
+                lines = para.split("\n", 1)
+                if len(lines) > 1 and CHAPTER_RE.match(lines[0]):
+                    content_stream.append(("chapter_title", lines[0].strip()))
+                    if lines[1].strip():
+                        content_stream.append(("text", lines[1].strip()))
+                else:
+                    # No newline split — try sentence split
+                    # Title usually doesn't contain a period
+                    first_period = para.find(". ")
+                    if 0 < first_period < 80:
+                        content_stream.append(("chapter_title", para[:first_period].strip()))
+                        content_stream.append(("text", para[first_period + 2:].strip()))
+                    else:
+                        content_stream.append(("chapter_title", para.strip()))
+            else:
+                content_stream.append(("text", para))
 
     return {
         "page_w": page_w,
@@ -152,8 +192,11 @@ async def translate_pdf(
     if progress_callback:
         progress_callback(5)
 
-    # Phase 2: Collect all text, merge into chunks for translation
-    text_items = [(i, item[1]) for i, item in enumerate(content_stream) if item[0] == "text"]
+    # Phase 2: Collect all translatable text (text + chapter_title), merge into chunks
+    text_items = [
+        (i, item[1]) for i, item in enumerate(content_stream)
+        if item[0] in ("text", "chapter_title")
+    ]
     all_texts = [t for _, t in text_items]
 
     # Merge into chunks respecting ~4000 chars
@@ -207,11 +250,11 @@ async def translate_pdf(
                 else:
                     translated_texts[text_idx] = all_texts[text_idx]
 
-    # Replace text items in content_stream with translations
+    # Replace translatable items in content_stream with translations
     text_counter = 0
     for i, item in enumerate(content_stream):
-        if item[0] == "text":
-            content_stream[i] = ("text", translated_texts[text_counter])
+        if item[0] in ("text", "chapter_title"):
+            content_stream[i] = (item[0], translated_texts[text_counter])
             text_counter += 1
 
     if progress_callback:
@@ -226,6 +269,10 @@ async def translate_pdf(
 
     out_doc = fitz.open()
 
+    # Track chapters for TOC
+    chapter_entries = []  # list of (title, page_number)
+    toc_page_num = None  # will be filled after we know where TOC lands
+
     # Cover
     if cover_img:
         try:
@@ -233,6 +280,10 @@ async def translate_pdf(
             cp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=cover_img)
         except Exception:
             pass
+
+    # Reserve a page for TOC (will be filled after we know all chapter pages)
+    toc_placeholder = out_doc.new_page(width=page_w, height=page_h)
+    toc_page_num = len(out_doc) - 1
 
     current_page = out_doc.new_page(width=page_w, height=page_h)
     current_y = margin
@@ -291,19 +342,36 @@ async def translate_pdf(
                         pass
                     current_y += draw_h + 12
 
+        elif item_type == "chapter_title":
+            title = content.strip()
+            if not title:
+                continue
+
+            _new_page()
+            chapter_entries.append((title, len(out_doc) - 1))
+            current_y += 60
+
+            title_rect = fitz.Rect(margin, current_y, page_w - margin, max_y)
+            title_kw = _font_kwargs(is_title=True)
+            rc = current_page.insert_textbox(
+                title_rect, title,
+                fontsize=TITLE_FONT_SIZE, align=fitz.TEXT_ALIGN_CENTER,
+                **title_kw
+            )
+            if rc >= 0:
+                used = (max_y - current_y) - rc
+                current_y += used + 24
+            else:
+                current_y += 40
+            continue
+
         elif item_type == "text":
             para = content.strip()
             if not para:
                 continue
 
-            is_chapter = bool(CHAPTER_RE.match(para))
-
-            if is_chapter:
-                _new_page()
-                current_y += 60
-
-            fs = TITLE_FONT_SIZE if is_chapter else FONT_SIZE
-            align = fitz.TEXT_ALIGN_CENTER if is_chapter else fitz.TEXT_ALIGN_LEFT
+            fs = FONT_SIZE
+            align = fitz.TEXT_ALIGN_LEFT
 
             # Estimate height
             avg_char_w = fs * 0.48
@@ -315,7 +383,7 @@ async def translate_pdf(
                 _new_page()
 
             para_rect = fitz.Rect(margin, current_y, page_w - margin, max_y)
-            kwargs = _font_kwargs(is_chapter)
+            kwargs = _font_kwargs(is_title=False)
             rc = current_page.insert_textbox(
                 para_rect, para, fontsize=fs, align=align, **kwargs
             )
@@ -326,6 +394,56 @@ async def translate_pdf(
             else:
                 # Overflow — text didn't fit. Insert what we can, continue on next page
                 current_y = max_y + 1
+
+    # Phase 5: Build TOC page with clickable links + PDF bookmarks
+    if chapter_entries and toc_page_num is not None:
+        toc_page = out_doc[toc_page_num]
+        toc_y = margin
+        toc_title = "TABLE OF CONTENTS"
+
+        # Title
+        title_rect = fitz.Rect(margin, toc_y, page_w - margin, toc_y + 40)
+        title_kwargs = _font_kwargs(is_title=True)
+        toc_page.insert_textbox(
+            title_rect, toc_title,
+            fontsize=16, align=fitz.TEXT_ALIGN_CENTER, **title_kwargs
+        )
+        toc_y += 50
+
+        # Chapter links
+        link_font_kwargs = _font_kwargs(is_title=False)
+        for title, page_num in chapter_entries:
+            if toc_y + 20 > max_y:
+                break  # TOC overflow — stop (rare for <30 chapters)
+
+            # Truncate long titles
+            display = title[:60] + "..." if len(title) > 60 else title
+            entry_rect = fitz.Rect(margin, toc_y, page_w - margin, toc_y + 18)
+
+            toc_page.insert_textbox(
+                entry_rect, display,
+                fontsize=11, align=fitz.TEXT_ALIGN_LEFT,
+                color=(0.2, 0.3, 0.7),  # blue-ish link color
+                **link_font_kwargs
+            )
+
+            # Add clickable link annotation
+            link = {
+                "kind": fitz.LINK_GOTO,
+                "from": entry_rect,
+                "page": page_num,
+                "to": fitz.Point(margin, margin),
+            }
+            toc_page.insert_link(link)
+
+            toc_y += 20
+
+        # Set PDF outline/bookmarks
+        toc_list = []
+        for title, page_num in chapter_entries:
+            # set_toc format: [level, title, page (1-based)]
+            toc_list.append([1, title, page_num + 1])
+        out_doc.set_toc(toc_list)
 
     result = out_doc.tobytes()
 
