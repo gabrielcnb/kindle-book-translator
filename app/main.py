@@ -258,7 +258,7 @@ async def progress_stream(job_id: str):
 
         while True:
             try:
-                event = await asyncio.wait_for(q.get(), timeout=60)
+                event = await asyncio.wait_for(q.get(), timeout=20)
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("status") in ("done", "error"):
                     break

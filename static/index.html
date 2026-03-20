@@ -3,118 +3,239 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Kindle Book Translator</title>
+  <title>Book Translator</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0f0f13; --card: #1a1a24; --border: #2e2e42;
-      --accent: #6c63ff; --accent2: #ff6584; --text: #e8e8f0; --muted: #8888a8;
-      --success: #4ade80; --warn: #fbbf24; --radius: 12px;
+      --bg: #0c0c10;
+      --surface: #13131c;
+      --border: #22222e;
+      --accent: #c9a227;
+      --accent-dim: rgba(201,162,39,.12);
+      --text: #dddde8;
+      --muted: #6e6e88;
+      --error: #e05555;
+      --ok: #5bbf7a;
+      --radius: 10px;
     }
-    body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:2rem 1rem; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 3rem 1rem 4rem;
+    }
 
-    header { text-align:center; margin-bottom:2rem; }
-    header h1 { font-size:2.1rem; font-weight:700; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
-    header p { color:var(--muted); margin-top:.4rem; }
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+    header h1 {
+      font-size: 1.65rem;
+      font-weight: 600;
+      letter-spacing: -.02em;
+      color: var(--text);
+    }
+    header h1 span { color: var(--accent); }
+    header p {
+      color: var(--muted);
+      font-size: .85rem;
+      margin-top: .35rem;
+    }
 
-    .card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:1.75rem; width:100%; max-width:660px; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      width: 100%;
+      max-width: 580px;
+    }
 
     /* Tabs */
-    .tabs { display:flex; gap:4px; background:var(--bg); border-radius:8px; padding:4px; margin-bottom:1.5rem; }
-    .tab { flex:1; padding:.5rem; text-align:center; border-radius:6px; font-size:.87rem; font-weight:500; cursor:pointer; color:var(--muted); transition:.15s; border:none; background:transparent; }
-    .tab.active { background:var(--card); color:var(--text); box-shadow:0 1px 4px rgba(0,0,0,.4); }
+    .tabs {
+      display: flex;
+      gap: 2px;
+      background: var(--bg);
+      border-radius: 7px;
+      padding: 3px;
+      margin-bottom: 1.5rem;
+    }
+    .tab {
+      flex: 1;
+      padding: .45rem;
+      text-align: center;
+      border-radius: 5px;
+      font-size: .83rem;
+      font-weight: 500;
+      cursor: pointer;
+      color: var(--muted);
+      border: none;
+      background: transparent;
+      transition: .12s;
+    }
+    .tab.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 1px 3px rgba(0,0,0,.5);
+    }
 
     /* Drop zone */
-    .drop-zone { border:2px dashed var(--border); border-radius:var(--radius); padding:2rem; text-align:center; cursor:pointer; transition:.2s; position:relative; }
-    .drop-zone:hover, .drop-zone.drag-over { border-color:var(--accent); background:rgba(108,99,255,.05); }
-    .drop-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
-    .drop-icon { font-size:2.2rem; margin-bottom:.6rem; }
-    .drop-label { color:var(--muted); font-size:.95rem; }
-    .drop-label strong { color:var(--text); }
-    .drop-formats { font-size:.78rem; color:var(--muted); margin-top:.3rem; }
+    .drop-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 2rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      position: relative;
+      transition: .15s;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .drop-zone input[type=file] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+    .drop-icon {
+      font-size: 1.8rem;
+      margin-bottom: .5rem;
+      opacity: .6;
+    }
+    .drop-label {
+      color: var(--muted);
+      font-size: .9rem;
+    }
+    .drop-label strong { color: var(--text); }
+    .drop-formats {
+      font-size: .75rem;
+      color: var(--muted);
+      margin-top: .25rem;
+    }
 
-    /* Cover + file info */
-    .file-row { display:none; align-items:center; gap:1rem; background:rgba(108,99,255,.08); border-radius:8px; padding:.75rem 1rem; margin-top:1rem; }
-    .file-row.visible { display:flex; }
-    .cover-thumb { width:44px; height:60px; object-fit:cover; border-radius:4px; background:var(--border); flex-shrink:0; }
-    .cover-placeholder { width:44px; height:60px; background:var(--border); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; flex-shrink:0; }
-    .file-meta { flex:1; min-width:0; }
-    .file-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.9rem; }
-    .file-size { color:var(--muted); font-size:.8rem; }
-    .remove-btn { cursor:pointer; color:var(--accent2); font-size:1.2rem; flex-shrink:0; background:none; border:none; }
+    /* File row */
+    .file-row {
+      display: none;
+      align-items: center;
+      gap: .9rem;
+      background: var(--accent-dim);
+      border: 1px solid rgba(201,162,39,.2);
+      border-radius: 8px;
+      padding: .65rem .9rem;
+      margin-top: .9rem;
+    }
+    .file-row.visible { display: flex; }
+    .cover-thumb { width: 38px; height: 52px; object-fit: cover; border-radius: 3px; flex-shrink: 0; }
+    .cover-placeholder { width: 38px; height: 52px; background: var(--border); border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; }
+    .file-meta { flex: 1; min-width: 0; }
+    .file-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .88rem; }
+    .file-size { color: var(--muted); font-size: .76rem; margin-top: .1rem; }
+    .remove-btn { cursor: pointer; color: var(--muted); font-size: 1rem; flex-shrink: 0; background: none; border: none; line-height: 1; }
+    .remove-btn:hover { color: var(--error); }
 
-    /* Form fields */
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:1.1rem; }
-    .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; margin-top:1.1rem; }
-    .field label { display:block; font-size:.78rem; color:var(--muted); margin-bottom:.35rem; text-transform:uppercase; letter-spacing:.05em; }
-    select { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:.5rem .7rem; font-size:.9rem; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238888a8' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right .7rem center; cursor:pointer; }
-    select:focus { outline:none; border-color:var(--accent); }
+    /* Fields */
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: .9rem; margin-top: 1rem; }
+    .field label { display: block; font-size: .74rem; color: var(--muted); margin-bottom: .3rem; text-transform: uppercase; letter-spacing: .06em; }
+    select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 7px;
+      padding: .45rem .65rem;
+      font-size: .88rem;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%236e6e88' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right .65rem center;
+      cursor: pointer;
+    }
+    select:focus { outline: none; border-color: var(--accent); }
 
     /* Toggle */
-    .toggle-row { display:flex; align-items:center; gap:.6rem; margin-top:1.1rem; }
-    .toggle-label { font-size:.88rem; color:var(--muted); cursor:pointer; user-select:none; }
-    .toggle { position:relative; width:38px; height:22px; flex-shrink:0; }
-    .toggle input { opacity:0; width:0; height:0; }
-    .slider { position:absolute; inset:0; background:var(--border); border-radius:99px; cursor:pointer; transition:.2s; }
-    .slider::before { content:''; position:absolute; width:16px; height:16px; left:3px; bottom:3px; background:white; border-radius:50%; transition:.2s; }
-    .toggle input:checked + .slider { background:var(--accent); }
-    .toggle input:checked + .slider::before { transform:translateX(16px); }
+    .toggle-row { display: flex; align-items: center; gap: .55rem; margin-top: 1rem; }
+    .toggle-label { font-size: .85rem; color: var(--muted); cursor: pointer; user-select: none; }
+    .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; background: var(--border); border-radius: 99px; cursor: pointer; transition: .15s; }
+    .slider::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .15s; }
+    .toggle input:checked + .slider { background: var(--accent); }
+    .toggle input:checked + .slider::before { transform: translateX(16px); }
 
-    /* Button */
-    .btn { width:100%; margin-top:1.25rem; padding:.8rem; background:linear-gradient(135deg,var(--accent),#8b7cf8); color:#fff; border:none; border-radius:8px; font-size:.95rem; font-weight:600; cursor:pointer; transition:.15s; }
-    .btn:hover:not(:disabled) { opacity:.9; transform:translateY(-1px); }
-    .btn:disabled { opacity:.4; cursor:not-allowed; transform:none; }
-    .btn-secondary { background:var(--card); border:1px solid var(--border); color:var(--text); }
-    .btn-secondary:hover:not(:disabled) { background:var(--border); }
+    /* Buttons */
+    .btn {
+      width: 100%;
+      margin-top: 1.1rem;
+      padding: .75rem;
+      background: var(--accent);
+      color: #0c0c10;
+      border: none;
+      border-radius: 7px;
+      font-size: .92rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: .12s;
+      letter-spacing: .01em;
+    }
+    .btn:hover:not(:disabled) { opacity: .88; }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 500;
+    }
+    .btn-secondary:hover:not(:disabled) { background: var(--border); }
 
     /* Progress */
-    .progress-wrap { display:none; margin-top:1.1rem; }
-    .progress-wrap.visible { display:block; }
-    .progress-label { display:flex; justify-content:space-between; font-size:.82rem; color:var(--muted); margin-bottom:.35rem; }
-    .progress-bg { background:var(--border); border-radius:99px; height:8px; overflow:hidden; }
-    .progress-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:99px; transition:width .4s ease; width:0%; }
+    .progress-wrap { display: none; margin-top: 1rem; }
+    .progress-wrap.visible { display: block; }
+    .progress-label { display: flex; justify-content: space-between; font-size: .78rem; color: var(--muted); margin-bottom: .3rem; }
+    .progress-bg { background: var(--border); border-radius: 99px; height: 5px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--accent); border-radius: 99px; transition: width .5s ease; width: 0%; }
 
-    .status { margin-top:.85rem; font-size:.88rem; text-align:center; min-height:1.2em; }
-    .status.error { color:var(--accent2); }
-    .status.success { color:var(--success); }
-    .status.warn { color:var(--warn); }
+    .status { margin-top: .75rem; font-size: .85rem; text-align: center; min-height: 1.1em; }
+    .status.error { color: var(--error); }
+    .status.success { color: var(--ok); }
 
-    /* Calibre badge */
-    .badge { display:inline-flex; align-items:center; gap:.3rem; font-size:.75rem; padding:.2rem .6rem; border-radius:99px; font-weight:500; }
-    .badge.green { background:rgba(74,222,128,.12); color:var(--success); border:1px solid rgba(74,222,128,.25); }
-    .badge.yellow { background:rgba(251,191,36,.1); color:var(--warn); border:1px solid rgba(251,191,36,.25); }
+    /* Convert panel */
+    .calibre-info { margin-top: .75rem; font-size: .8rem; color: var(--muted); }
+    .badge { display: inline-flex; align-items: center; gap: .25rem; font-size: .74rem; padding: .18rem .5rem; border-radius: 99px; }
+    .badge.green { background: rgba(91,191,122,.1); color: var(--ok); border: 1px solid rgba(91,191,122,.25); }
+    .badge.yellow { background: rgba(201,162,39,.1); color: var(--accent); border: 1px solid rgba(201,162,39,.25); }
 
-    /* Features */
-    .features { display:grid; grid-template-columns:repeat(3,1fr); gap:.65rem; margin-top:1.5rem; width:100%; max-width:660px; }
-    .feature { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:.85rem; text-align:center; font-size:.82rem; }
-    .feature .icon { font-size:1.35rem; margin-bottom:.3rem; }
-    .feature .title { font-weight:600; margin-bottom:.15rem; }
-    .feature .desc { color:var(--muted); font-size:.75rem; }
+    footer { margin-top: 2.5rem; color: var(--muted); font-size: .74rem; text-align: center; }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--text); }
 
-    footer { margin-top:2rem; color:var(--muted); font-size:.78rem; text-align:center; }
-
-    @media(max-width:500px) { .row,.row-3,.features { grid-template-columns:1fr; } }
+    @media(max-width:480px) { .row { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
 
 <header>
-  <h1>📚 Kindle Book Translator</h1>
-  <p>Translate &amp; convert EPUB / PDF — covers preserved, Kindle-ready</p>
+  <h1>Book <span>Translator</span></h1>
+  <p>EPUB & PDF — translated to your language, Kindle-ready</p>
 </header>
 
 <div class="card">
-  <!-- Tabs -->
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('translate', this)">🌍 Translate</button>
-    <button class="tab" onclick="switchTab('convert', this)">🔄 Convert Format</button>
+    <button class="tab active" onclick="switchTab('translate', this)">Translate</button>
+    <button class="tab" onclick="switchTab('convert', this)">Convert Format</button>
   </div>
 
-  <!-- Drop zone (shared) -->
   <div class="drop-zone" id="dropZone">
     <input type="file" id="fileInput" accept=".epub,.pdf" />
-    <div class="drop-icon">📖</div>
-    <div class="drop-label"><strong>Click to upload</strong> or drag &amp; drop</div>
+    <div class="drop-icon">⬆</div>
+    <div class="drop-label"><strong>Click to upload</strong> or drag & drop</div>
     <div class="drop-formats">EPUB · PDF — max 50 MB</div>
   </div>
 
@@ -132,11 +253,11 @@
   <div id="panel-translate">
     <div class="row">
       <div class="field">
-        <label>Source Language</label>
+        <label>From</label>
         <select id="sourceLang"><option value="auto">Auto Detect</option></select>
       </div>
       <div class="field">
-        <label>Target Language</label>
+        <label>To</label>
         <select id="targetLang"><option value="pt">Portuguese</option></select>
       </div>
     </div>
@@ -147,16 +268,16 @@
         <span class="slider"></span>
       </label>
       <span class="toggle-label" onclick="document.getElementById('bilingualToggle').click()">
-        Bilingual mode — show original &amp; translation side by side
+        Bilingual — original & translation side by side
       </span>
     </div>
 
-    <button class="btn" id="translateBtn" disabled>Translate Book</button>
+    <button class="btn" id="translateBtn" disabled>Translate</button>
   </div>
 
   <!-- CONVERT panel -->
   <div id="panel-convert" style="display:none">
-    <div class="row" style="grid-template-columns:1fr">
+    <div class="row" style="grid-template-columns:1fr; margin-top:.9rem">
       <div class="field">
         <label>Output Format</label>
         <select id="outputFormat">
@@ -165,11 +286,10 @@
         </select>
       </div>
     </div>
-    <div id="calibreInfo" style="margin-top:.75rem;font-size:.82rem;color:var(--muted)">Checking Calibre…</div>
-    <button class="btn btn-secondary" id="convertBtn" style="margin-top:1rem" disabled>Convert</button>
+    <div class="calibre-info" id="calibreInfo">Checking Calibre…</div>
+    <button class="btn btn-secondary" id="convertBtn" disabled>Convert</button>
   </div>
 
-  <!-- Progress (shared) -->
   <div class="progress-wrap" id="progressWrap">
     <div class="progress-label">
       <span id="progressText">Processing…</span>
@@ -181,23 +301,15 @@
   <div class="status" id="status"></div>
 </div>
 
-<div class="features">
-  <div class="feature"><div class="icon">🎨</div><div class="title">Cover Preserved</div><div class="desc">Original book cover in every output</div></div>
-  <div class="feature"><div class="icon">📱</div><div class="title">Kindle Ready</div><div class="desc">EPUB output works on all e-readers</div></div>
-  <div class="feature"><div class="icon">🔄</div><div class="title">Format Convert</div><div class="desc">EPUB↔PDF without translating</div></div>
-  <div class="feature"><div class="icon">🌍</div><div class="title">100+ Languages</div><div class="desc">Google Translate, no API key needed</div></div>
-  <div class="feature"><div class="icon">⚡</div><div class="title">Smart Cache</div><div class="desc">Re-uploads skip already-translated text</div></div>
-  <div class="feature"><div class="icon">📖</div><div class="title">Bilingual Mode</div><div class="desc">Original + translation side by side</div></div>
-</div>
-
-<footer>Open source · Free · <a href="https://github.com/gabrielcnb/kindle-book-translator" style="color:var(--accent)">GitHub</a></footer>
+<footer>
+  <a href="https://github.com/gabrielcnb/kindle-book-translator" target="_blank">GitHub</a>
+</footer>
 
 <script>
-  // ── State ────────────────────────────────────────────────────────────────
   let selectedFile = null;
   let activeTab = 'translate';
 
-  // ── Init ─────────────────────────────────────────────────────────────────
+  // Load languages
   fetch('/languages').then(r => r.json()).then(({ languages }) => {
     const src = document.getElementById('sourceLang');
     const tgt = document.getElementById('targetLang');
@@ -211,14 +323,12 @@
 
   fetch('/info').then(r => r.json()).then(info => {
     const el = document.getElementById('calibreInfo');
-    if (info.calibre_available) {
-      el.innerHTML = '<span class="badge green">✓ Calibre installed — high-quality conversion</span>';
-    } else {
-      el.innerHTML = '<span class="badge yellow">⚠ Calibre not found — using fallback converter. <a href="https://calibre-ebook.com/download" target="_blank" style="color:var(--accent)">Install Calibre</a> for best results.</span>';
-    }
+    el.innerHTML = info.calibre_available
+      ? '<span class="badge green">✓ Calibre — high-quality conversion</span>'
+      : '<span class="badge yellow">⚠ Calibre not found — <a href="https://calibre-ebook.com/download" target="_blank" style="color:var(--accent)">install for best results</a></span>';
   }).catch(() => {});
 
-  // ── Tabs ─────────────────────────────────────────────────────────────────
+  // Tabs
   function switchTab(tab, btn) {
     activeTab = tab;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -234,7 +344,7 @@
     document.getElementById('convertBtn').disabled = !has;
   }
 
-  // ── File handling ─────────────────────────────────────────────────────────
+  // File handling
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
 
@@ -251,7 +361,6 @@
     const ext = file.name.split('.').pop().toLowerCase();
     if (!['epub', 'pdf'].includes(ext)) { showStatus('Only EPUB and PDF supported.', 'error'); return; }
     if (file.size > 50 * 1024 * 1024) { showStatus('File too large (max 50 MB).', 'error'); return; }
-
     selectedFile = file;
     document.getElementById('fileName').textContent = file.name;
     document.getElementById('fileSize').textContent = fmtSize(file.size);
@@ -259,10 +368,7 @@
     showStatus('');
     updateButtons();
     loadCover(file);
-
-    // Auto-set output format opposite to input
-    const outSel = document.getElementById('outputFormat');
-    outSel.value = ext === 'epub' ? 'pdf' : 'epub';
+    document.getElementById('outputFormat').value = ext === 'epub' ? 'pdf' : 'epub';
   }
 
   function clearFile() {
@@ -281,15 +387,14 @@
       const res = await fetch('/cover', { method: 'POST', body: fd });
       if (!res.ok) return;
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
       const img = document.getElementById('coverImg');
-      img.src = url;
+      img.src = URL.createObjectURL(blob);
       img.style.display = 'block';
       document.getElementById('coverPlaceholder').style.display = 'none';
-    } catch { /* no cover, that's fine */ }
+    } catch {}
   }
 
-  // ── Translate ─────────────────────────────────────────────────────────────
+  // Translate
   document.getElementById('translateBtn').addEventListener('click', async () => {
     if (!selectedFile) return;
     const fd = new FormData();
@@ -297,26 +402,23 @@
     fd.append('source_lang', document.getElementById('sourceLang').value);
     fd.append('target_lang', document.getElementById('targetLang').value);
     fd.append('bilingual', document.getElementById('bilingualToggle').checked ? 'true' : 'false');
-
     await runJob('/translate', fd, 'Translating');
   });
 
-  // ── Convert ───────────────────────────────────────────────────────────────
+  // Convert
   document.getElementById('convertBtn').addEventListener('click', async () => {
     if (!selectedFile) return;
     const fd = new FormData();
     fd.append('file', selectedFile);
     fd.append('output_format', document.getElementById('outputFormat').value);
-
     await runJob('/convert', fd, 'Converting');
   });
 
-  // ── Shared job runner ─────────────────────────────────────────────────────
+  // Job runner
   async function runJob(endpoint, formData, label) {
     setRunning(true);
     resetProgress(label + '…');
     showStatus('');
-
     try {
       const res = await fetch(endpoint, { method: 'POST', body: formData });
       if (!res.ok) {
@@ -324,20 +426,18 @@
         throw new Error(err.detail || 'Failed');
       }
       const { job_id } = await res.json();
-
       const downloadUrl = await listenSSE(job_id, label);
       await downloadFile(downloadUrl);
-      showStatus('✅ Done! Download started.', 'success');
-
+      showStatus('Done! Download started.', 'success');
     } catch (err) {
-      showStatus('❌ ' + err.message, 'error');
+      showStatus(err.message, 'error');
       document.getElementById('progressText').textContent = 'Error';
     } finally {
       setRunning(false);
     }
   }
 
-  function listenSSE(job_id, label) {
+  function listenSSE(job_id, label, attempt = 0) {
     return new Promise((resolve, reject) => {
       const es = new EventSource(`/progress/${job_id}`);
       es.onmessage = e => {
@@ -356,7 +456,19 @@
           reject(new Error(d.error || 'Job failed'));
         }
       };
-      es.onerror = () => { es.close(); reject(new Error('Connection lost')); };
+      es.onerror = e => {
+        console.error('SSE error', e);
+        es.close();
+        if (attempt < 4) {
+          const delay = 1500 * (attempt + 1);
+          document.getElementById('progressText').textContent = `Reconnecting (${attempt + 1}/4)…`;
+          setTimeout(() => {
+            listenSSE(job_id, label, attempt + 1).then(resolve).catch(reject);
+          }, delay);
+        } else {
+          reject(new Error('Connection lost after retries. The file may still be processing — try refreshing.'));
+        }
+      };
     });
   }
 
@@ -375,7 +487,7 @@
     a.remove();
   }
 
-  // ── UI helpers ────────────────────────────────────────────────────────────
+  // UI helpers
   function setRunning(on) {
     document.getElementById('translateBtn').disabled = on;
     document.getElementById('convertBtn').disabled = on;
