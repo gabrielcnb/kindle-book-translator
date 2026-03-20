@@ -75,16 +75,23 @@ def _get_font_variant(flags: int) -> str:
     return "regular"
 
 
-def _detect_alignment(block_bbox, page_width) -> int:
-    """Detect if a block is centered on the page."""
+def _detect_alignment(block_bbox, page_width, text: str) -> int:
+    """Detect block alignment. Only short, centered text gets CENTER; body text gets JUSTIFY."""
     x0, _, x1, _ = block_bbox
-    block_center = (x0 + x1) / 2
-    page_center = page_width / 2
-    if abs(block_center - page_center) < 20:
+    block_width = x1 - x0
+    text_len = len(text)
+
+    # Short text that's centered on page → CENTER (titles, epigraphs, short lines)
+    if text_len < 80 and block_width < page_width * 0.6:
         left_margin = x0
         right_margin = page_width - x1
-        if abs(left_margin - right_margin) < 30:
+        if abs(left_margin - right_margin) < 40:
             return fitz.TEXT_ALIGN_CENTER
+
+    # Wide body text → JUSTIFY (like original book layout)
+    if block_width > page_width * 0.5:
+        return fitz.TEXT_ALIGN_JUSTIFY
+
     return fitz.TEXT_ALIGN_LEFT
 
 
@@ -149,7 +156,7 @@ async def translate_pdf(
                 "size": avg_size,
                 "color": avg_color,
                 "flags": dominant_flags,
-                "align": _detect_alignment(block["bbox"], page_width),
+                "align": _detect_alignment(block["bbox"], page_width, full_text),
             })
             text_index_map.append((page_idx, len(blocks_data) - 1))
             all_texts.append(full_text)
