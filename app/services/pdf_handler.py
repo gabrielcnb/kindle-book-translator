@@ -8,7 +8,7 @@ from app.translator import translate_text
 
 BATCH_SEP = "KBTXSEP"
 BATCH_SEP_RE = re.compile(re.escape(BATCH_SEP))
-BATCH_SIZE = 15
+BATCH_SIZE = 30
 
 
 async def _batch_translate_spans(

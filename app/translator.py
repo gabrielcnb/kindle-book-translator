@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 from deep_translator import GoogleTranslator
 from app import cache
 
@@ -33,20 +34,26 @@ LANGUAGES = {
     "zu": "Zulu",
 }
 
-MAX_CHUNK = 4500
-DELAY_BETWEEN_REQUESTS = 0.08  # between sequential chunks
-TRANSLATE_TIMEOUT = 30  # seconds per API call
+MAX_CHUNK = 4800
+TRANSLATE_TIMEOUT = 30
 MAX_RETRIES = 2
 
-# Semaphore limiting concurrent Google Translate calls (avoids 429 on free API)
 _translate_sem: "asyncio.Semaphore | None" = None
+_thread_pool: concurrent.futures.ThreadPoolExecutor | None = None
 
 
 def _get_semaphore() -> "asyncio.Semaphore":
     global _translate_sem
     if _translate_sem is None:
-        _translate_sem = asyncio.Semaphore(4)
+        _translate_sem = asyncio.Semaphore(8)
     return _translate_sem
+
+
+def _get_pool() -> concurrent.futures.ThreadPoolExecutor:
+    global _thread_pool
+    if _thread_pool is None:
+        _thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=16)
+    return _thread_pool
 
 
 def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
@@ -68,14 +75,15 @@ def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
 
 
 async def _translate_chunk(translator: GoogleTranslator, chunk: str) -> str:
-    """Translate a single chunk with timeout and retry, rate-limited by semaphore."""
     sem = _get_semaphore()
+    pool = _get_pool()
+    loop = asyncio.get_running_loop()
     last_exc: BaseException | None = None
     for attempt in range(MAX_RETRIES):
         try:
             async with sem:
                 result = await asyncio.wait_for(
-                    asyncio.to_thread(translator.translate, chunk),
+                    loop.run_in_executor(pool, translator.translate, chunk),
                     timeout=TRANSLATE_TIMEOUT,
                 )
             return result or chunk
@@ -103,12 +111,10 @@ async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
         cached = cache.get(source_lang, target_lang, chunk)
         if cached is not None:
             return cached
-        # Create per-task to avoid shared mutable state across threads
         tr = GoogleTranslator(source=source_lang, target=target_lang)
         result = await _translate_chunk(tr, chunk)
         cache.set(source_lang, target_lang, chunk, result)
         return result
 
-    # Translate all chunks concurrently (semaphore in _translate_chunk limits rate)
     translated_chunks = await asyncio.gather(*[_translate_one(c) for c in chunks])
     return " ".join(translated_chunks)

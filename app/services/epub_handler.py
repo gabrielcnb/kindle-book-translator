@@ -16,7 +16,7 @@ BLOCK_TAGS = frozenset({
 # Separator that Google Translate preserves (treats as unknown acronym)
 BATCH_SEP = "KBTXSEP"
 BATCH_SEP_RE = re.compile(re.escape(BATCH_SEP))
-BATCH_SIZE = 20  # blocks per API call (reduces calls ~20x)
+BATCH_SIZE = 30  # blocks per API call
 
 
 def _should_skip(node) -> bool:
