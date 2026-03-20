@@ -17,7 +17,7 @@ FIRST_LINE_INDENT = 24  # first-line indent like printed books
 
 CHAPTER_RE = re.compile(
     r'^(CHAPTER|CAPITULO|CAP[ÍI]TULO|PART|PARTE)\s+[\dIVXLCDM]+',
-    re.IGNORECASE | re.MULTILINE,
+    re.IGNORECASE,
 )
 
 
@@ -52,6 +52,22 @@ def _find_font(paths: list[str]) -> str | None:
 
 # ── Extraction ─────────────────────────────────────────────────────────────
 
+def _join_lines(raw: str, paragraphs: list[str]):
+    """Join soft-wrapped lines from a PDF text block into paragraphs."""
+    lines = raw.split("\n")
+    joined = ""
+    for line in lines:
+        line = line.strip()
+        if not line:
+            if joined:
+                paragraphs.append(joined)
+                joined = ""
+            continue
+        joined = (joined + " " + line) if joined else line
+    if joined:
+        paragraphs.append(joined)
+
+
 def _extract_all(file_bytes: bytes) -> dict:
     """Extract text blocks, images, and metadata from PDF."""
     src_doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -67,48 +83,44 @@ def _extract_all(file_bytes: bytes) -> dict:
         # Extract text using blocks (preserves paragraph structure)
         blocks = page.get_text("blocks")
         paragraphs = []
+        # Collect raw text blocks for this page
+        raw_blocks = []
         for b in blocks:
-            if b[6] == 0:  # text block
+            if b[6] == 0:
                 raw = b[4].strip()
-                if not raw:
-                    continue
+                if raw:
+                    raw_blocks.append(raw)
 
-                # If block starts with chapter heading, split title from body
-                if CHAPTER_RE.match(raw):
-                    first_nl = raw.find("\n")
-                    if first_nl > 0:
-                        paragraphs.append(raw[:first_nl].strip())  # title
-                        body = raw[first_nl:].strip()
-                        if body:
-                            # Join remaining soft-wrapped lines
-                            lines = body.split("\n")
-                            joined = ""
-                            for line in lines:
-                                line = line.strip()
-                                if not line:
-                                    if joined:
-                                        paragraphs.append(joined)
-                                        joined = ""
-                                    continue
-                                joined = (joined + " " + line) if joined else line
-                            if joined:
-                                paragraphs.append(joined)
-                    else:
-                        paragraphs.append(raw)
+        # Process blocks with look-ahead for multi-block chapter detection
+        i = 0
+        while i < len(raw_blocks):
+            raw = raw_blocks[i]
+
+            # Format 1: "CHAPTER" alone + next block is a number
+            if (raw.upper().strip() in ("CHAPTER", "CAPITULO", "CAPÍTULO", "PART", "PARTE")
+                    and i + 1 < len(raw_blocks)
+                    and raw_blocks[i + 1].strip().isdigit()):
+                title = f"{raw} {raw_blocks[i + 1].strip()}"
+                paragraphs.append(title)
+                i += 2
+                continue
+
+            # Format 2: "CHAPTER X – TITLE\nbody text" in one block
+            if CHAPTER_RE.match(raw):
+                first_nl = raw.find("\n")
+                if first_nl > 0:
+                    paragraphs.append(raw[:first_nl].strip())
+                    body = raw[first_nl:].strip()
+                    if body:
+                        _join_lines(body, paragraphs)
                 else:
-                    # Normal block: join soft-wrapped lines
-                    lines = raw.split("\n")
-                    joined = ""
-                    for line in lines:
-                        line = line.strip()
-                        if not line:
-                            if joined:
-                                paragraphs.append(joined)
-                                joined = ""
-                            continue
-                        joined = (joined + " " + line) if joined else line
-                    if joined:
-                        paragraphs.append(joined)
+                    paragraphs.append(raw)
+                i += 1
+                continue
+
+            # Normal block
+            _join_lines(raw, paragraphs)
+            i += 1
 
         pages.append(paragraphs)
 
