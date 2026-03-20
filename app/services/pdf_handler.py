@@ -176,6 +176,8 @@ async def translate_pdf(
     current_indices = []
 
     for idx, text in enumerate(all_texts):
+        if len(text) < 20:
+            continue  # short texts translated individually, skip batching
         if len(current_chunk) + len(text) + len(BATCH_SEP) + 4 > CHUNK_TARGET and current_chunk:
             chunks.append(current_chunk)
             chunk_indices.append(current_indices)
@@ -192,27 +194,42 @@ async def translate_pdf(
     completed = 0
     total_chunks = max(len(chunks), 1)
 
+    # Translate short texts individually (they get lost in batch separators)
+    short_tasks = []
+    for idx, text in enumerate(all_texts):
+        if len(text) < 20:
+            async def _translate_short(i=idx, t=text):
+                nonlocal completed
+                try:
+                    translated_all[i] = await translate_text(t, source_lang, target_lang)
+                except Exception:
+                    pass
+            short_tasks.append(_translate_short())
+
     async def _translate_chunk(chunk, indices):
         nonlocal completed
         result = await translate_text(chunk, source_lang, target_lang)
         parts = [p.strip() for p in BATCH_SEP_RE.split(result)]
         if len(parts) == len(indices):
             for i, idx in enumerate(indices):
-                translated_all[idx] = parts[i]
+                if len(all_texts[idx]) >= 20:  # skip shorts, already handled
+                    translated_all[idx] = parts[i]
         else:
             for i, idx in enumerate(indices):
-                try:
-                    translated_all[idx] = await translate_text(all_texts[idx], source_lang, target_lang)
-                except Exception:
-                    pass
+                if len(all_texts[idx]) >= 20:
+                    try:
+                        translated_all[idx] = await translate_text(all_texts[idx], source_lang, target_lang)
+                    except Exception:
+                        pass
         completed += 1
         if progress_callback:
             progress_callback(5 + int(completed / total_chunks * 80))
 
-    await asyncio.gather(*[
-        _translate_chunk(chunk, indices)
-        for chunk, indices in zip(chunks, chunk_indices)
-    ])
+    await asyncio.gather(
+        *short_tasks,
+        *[_translate_chunk(chunk, indices)
+          for chunk, indices in zip(chunks, chunk_indices)]
+    )
 
     # Map back
     for text_idx, (page_idx, block_idx) in enumerate(text_index_map):
@@ -258,11 +275,11 @@ async def translate_pdf(
             else:
                 color = (0, 0, 0)
 
-            # Scale font if translated text is much longer
+            # Scale font gently if translated text is longer
             len_ratio = len(translated) / max(len(bl["text"]), 1)
             font_size = orig_size
-            if len_ratio > 1.2:
-                font_size = max(orig_size / (len_ratio ** 0.4), orig_size * 0.6)
+            if len_ratio > 1.3:
+                font_size = max(orig_size / (len_ratio ** 0.25), orig_size * 0.85)
 
             # Select font variant (regular, italic, bold, bolditalic)
             variant = _get_font_variant(flags)
@@ -283,12 +300,20 @@ async def translate_pdf(
                 kwargs["fontname"] = "helv"
                 kwargs["encoding"] = fitz.TEXT_ENCODING_LATIN
 
+            # Expand rect if translated text is wider than original bbox
+            min_width = len(translated) * font_size * 0.5
+            if rect.width < min_width:
+                rect = fitz.Rect(rect.x0, rect.y0, max(rect.x1, rect.x0 + min_width), rect.y1)
+
             rc = page.insert_textbox(rect, translated, **kwargs)
 
-            # If overflow, retry with smaller font
+            # If overflow, retry with progressively smaller font
             if rc < 0:
-                kwargs["fontsize"] = font_size * 0.75
-                page.insert_textbox(rect, translated, **kwargs)
+                for shrink in [0.88, 0.78, 0.68]:
+                    kwargs["fontsize"] = orig_size * shrink
+                    rc = page.insert_textbox(rect, translated, **kwargs)
+                    if rc >= 0:
+                        break
 
         if progress_callback and page_idx % 20 == 0:
             progress_callback(88 + int((page_idx + 1) / total_pages * 10))
