@@ -287,9 +287,10 @@ async def translate_pdf(
                 color = (0, 0, 0)
 
             # Scale font gently if translated text is longer
+            # Never scale short texts — they always fit
             len_ratio = len(translated) / max(len(bl["text"]), 1)
             font_size = orig_size
-            if len_ratio > 1.3:
+            if len_ratio > 1.3 and len(bl["text"]) > 40:
                 font_size = max(orig_size / (len_ratio ** 0.25), orig_size * 0.85)
 
             # Select font variant (regular, italic, bold, bolditalic)
@@ -311,22 +312,34 @@ async def translate_pdf(
                 kwargs["fontname"] = "helv"
                 kwargs["encoding"] = fitz.TEXT_ENCODING_LATIN
 
-            # Expand rect width if needed, but never past page margins
-            page_right = out_doc[page_idx].rect.width - 50  # right margin
-            min_width = len(translated) * font_size * 0.45
-            if rect.width < min_width:
-                new_x1 = min(rect.x0 + min_width, page_right)
-                rect = fitz.Rect(rect.x0, rect.y0, new_x1, rect.y1)
+            # Short text: use insert_text (no clipping) instead of textbox
+            if len(translated) < 30:
+                try:
+                    page.insert_text(
+                        (rect.x0, rect.y1 - 2), translated,
+                        fontsize=font_size, color=color,
+                        fontname=kwargs.get("fontname", "helv"),
+                        fontfile=kwargs.get("fontfile"),
+                    )
+                except Exception:
+                    page.insert_textbox(rect, translated, **kwargs)
+            else:
+                # Expand rect width if needed, but never past page margins
+                page_right = out_doc[page_idx].rect.width - 50
+                min_width = len(translated) * font_size * 0.45
+                if rect.width < min_width:
+                    new_x1 = min(rect.x0 + min_width, page_right)
+                    rect = fitz.Rect(rect.x0, rect.y0, new_x1, rect.y1)
 
-            rc = page.insert_textbox(rect, translated, **kwargs)
+                rc = page.insert_textbox(rect, translated, **kwargs)
 
-            # If overflow, retry with progressively smaller font
-            if rc < 0:
-                for shrink in [0.88, 0.78, 0.68]:
-                    kwargs["fontsize"] = orig_size * shrink
-                    rc = page.insert_textbox(rect, translated, **kwargs)
-                    if rc >= 0:
-                        break
+                # If overflow, retry with progressively smaller font
+                if rc < 0:
+                    for shrink in [0.88, 0.78, 0.68]:
+                        kwargs["fontsize"] = orig_size * shrink
+                        rc = page.insert_textbox(rect, translated, **kwargs)
+                        if rc >= 0:
+                            break
 
         if progress_callback and page_idx % 20 == 0:
             progress_callback(88 + int((page_idx + 1) / total_pages * 10))
