@@ -150,10 +150,22 @@ def _extract_all(file_bytes: bytes) -> dict:
 
     src_doc.close()
 
-    # Build content stream: list of (type, content)
-    # Types: "text", "images", "chapter_title"
+    # Find first chapter page
+    first_chapter_page = 0
+    for page_idx, paragraphs in enumerate(pages):
+        for para in paragraphs:
+            if CHAPTER_RE.match(para):
+                first_chapter_page = page_idx
+                break
+        if first_chapter_page > 0:
+            break
+
+    # Build content stream ONLY from chapter pages onward
+    # (front matter will be copied as-is from original)
     content_stream = []
     for page_idx, paragraphs in enumerate(pages):
+        if page_idx < first_chapter_page:
+            continue  # skip front matter — copied directly from original
         if page_idx in all_images:
             content_stream.append(("images", all_images[page_idx]))
         for para in paragraphs:
@@ -182,6 +194,7 @@ def _extract_all(file_bytes: bytes) -> dict:
         "page_w": page_w,
         "page_h": page_h,
         "content_stream": content_stream,
+        "first_chapter_page": first_chapter_page,
     }
 
 
@@ -202,6 +215,7 @@ async def translate_pdf(
     page_w = data["page_w"]
     page_h = data["page_h"]
     content_stream = data["content_stream"]
+    first_chapter_page = data.get("first_chapter_page", 0)
 
     if progress_callback:
         progress_callback(5)
@@ -284,18 +298,15 @@ async def translate_pdf(
     out_doc = fitz.open()
 
     # Track chapters for TOC
-    chapter_entries = []  # list of (title, page_number)
-    toc_page_num = None  # will be filled after we know where TOC lands
+    chapter_entries = []
 
-    # Cover
-    if cover_img:
-        try:
-            cp = out_doc.new_page(width=page_w, height=page_h)
-            cp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=cover_img)
-        except Exception:
-            pass
+    # Copy front matter pages directly from original (preserves layout perfectly)
+    src_doc = fitz.open(stream=file_bytes, filetype="pdf")
+    for pg_idx in range(first_chapter_page):
+        out_doc.insert_pdf(src_doc, from_page=pg_idx, to_page=pg_idx)
+    src_doc.close()
 
-    # Reserve a page for TOC (will be filled after we know all chapter pages)
+    # Reserve a page for TOC
     toc_placeholder = out_doc.new_page(width=page_w, height=page_h)
     toc_page_num = len(out_doc) - 1
 
