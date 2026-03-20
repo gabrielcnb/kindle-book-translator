@@ -212,6 +212,51 @@
     .badge.green { background: rgba(91,191,122,.1); color: var(--ok); border: 1px solid rgba(91,191,122,.25); }
     .badge.yellow { background: rgba(201,162,39,.1); color: var(--accent); border: 1px solid rgba(201,162,39,.25); }
 
+    /* Features collapsible */
+    .features-details {
+      width: 100%;
+      max-width: 580px;
+      margin-top: 1.5rem;
+    }
+    .features-details summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: .82rem;
+      text-align: center;
+      list-style: none;
+      user-select: none;
+      transition: .15s;
+    }
+    .features-details summary::-webkit-details-marker { display: none; }
+    .features-details summary::after {
+      content: ' +';
+      color: var(--accent);
+    }
+    .features-details[open] summary::after {
+      content: ' −';
+    }
+    .features-details summary:hover { color: var(--text); }
+    .features-list {
+      list-style: none;
+      margin-top: .8rem;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: .4rem;
+    }
+    .features-list li {
+      font-size: .8rem;
+      color: var(--muted);
+      padding: .35rem .7rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .features-list li strong {
+      color: var(--text);
+      font-weight: 500;
+    }
+
     footer { margin-top: 2.5rem; color: var(--muted); font-size: .74rem; text-align: center; }
     footer a { color: var(--muted); text-decoration: none; }
     footer a:hover { color: var(--text); }
@@ -300,6 +345,17 @@
 
   <div class="status" id="status"></div>
 </div>
+
+<details class="features-details">
+  <summary>Features</summary>
+  <ul class="features-list">
+    <li><strong>Cover Preserved</strong> — original book cover in every output</li>
+    <li><strong>Kindle Ready</strong> — EPUB output works on all e-readers</li>
+    <li><strong>Format Convert</strong> — EPUB to PDF without translating</li>
+    <li><strong>Smart Cache</strong> — re-uploads skip already-translated text</li>
+    <li><strong>Bilingual Mode</strong> — original & translation side by side</li>
+  </ul>
+</details>
 
 <footer>
   <a href="https://github.com/gabrielcnb/kindle-book-translator" target="_blank">GitHub</a>
