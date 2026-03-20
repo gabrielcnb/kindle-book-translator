@@ -316,7 +316,7 @@ async def translate_pdf(
             if len(translated) < 30:
                 try:
                     page.insert_text(
-                        (rect.x0, rect.y1 - 2), translated,
+                        (rect.x0, rect.y0 + font_size), translated,
                         fontsize=font_size, color=color,
                         fontname=kwargs.get("fontname", "helv"),
                         fontfile=kwargs.get("fontfile"),
