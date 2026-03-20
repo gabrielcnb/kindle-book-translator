@@ -12,6 +12,8 @@ from app.services.cover import extract_pdf_cover
 CHUNK_TARGET = 4000
 FONT_SIZE = 13
 TITLE_FONT_SIZE = 18
+PARA_SPACING = 18  # pixels between paragraphs
+FIRST_LINE_INDENT = 24  # first-line indent like printed books
 
 CHAPTER_RE = re.compile(
     r'^(CHAPTER|CAPITULO|CAP[ÍI]TULO|PART|PARTE)\s+[\dIVXLCDM]+',
@@ -382,15 +384,19 @@ async def translate_pdf(
             if current_y + needed > max_y:
                 _new_page()
 
+            # Add first-line indent for body paragraphs
+            indent = FIRST_LINE_INDENT
+            indented_para = " " * 3 + para  # 3 spaces ~= visual indent with serif
+
             para_rect = fitz.Rect(margin, current_y, page_w - margin, max_y)
             kwargs = _font_kwargs(is_title=False)
             rc = current_page.insert_textbox(
-                para_rect, para, fontsize=fs, align=align, **kwargs
+                para_rect, indented_para, fontsize=fs, align=align, **kwargs
             )
 
             if rc >= 0:
                 used = (max_y - current_y) - rc
-                current_y += used + 8
+                current_y += used + PARA_SPACING
             else:
                 # Overflow — text didn't fit. Insert what we can, continue on next page
                 current_y = max_y + 1
