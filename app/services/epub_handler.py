@@ -1,6 +1,8 @@
 import asyncio
 import io
+import os
 import re
+import tempfile
 from typing import Callable
 import ebooklib
 from ebooklib import epub
@@ -175,11 +177,16 @@ async def translate_epub(
 
     await asyncio.gather(*[_process_item(item) for item in items], return_exceptions=True)
 
-    out = io.BytesIO()
-    epub.write_epub(out, book)
-    out.seek(0)
+    tmp = tempfile.NamedTemporaryFile(suffix=".epub", delete=False)
+    tmp.close()
+    try:
+        epub.write_epub(tmp.name, book)
+        with open(tmp.name, "rb") as f:
+            result = f.read()
+    finally:
+        os.unlink(tmp.name)
 
     if progress_callback:
         progress_callback(100)
 
-    return out.read()
+    return result
