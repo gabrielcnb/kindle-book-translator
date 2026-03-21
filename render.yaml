@@ -9,5 +9,5 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
-    healthCheckPath: /
+    healthCheckPath: /health
     autoDeploy: true

@@ -105,7 +105,7 @@ async def translate_epub(
     if bilingual:
         css = epub.EpubItem(
             uid="bilingual_css",
-            file_name="bilingual.css",
+            file_name="Styles/bilingual.css",
             media_type="text/css",
             content=b"""
 .original-text {
@@ -135,7 +135,7 @@ async def translate_epub(
             if bilingual:
                 soup.head.append(soup.new_tag(
                     "link", rel="stylesheet",
-                    href="../bilingual.css", type="text/css"
+                    href="../Styles/bilingual.css", type="text/css"
                 ))
 
             blocks = _collect_blocks(soup)

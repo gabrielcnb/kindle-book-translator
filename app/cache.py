@@ -1,37 +1,41 @@
 """
 Disk-backed translation cache.
-Key = MD5(source_lang + target_lang + text), value = translated string.
+Key = SHA-256(source_lang + target_lang + text), value = translated string.
 Persists to JSON file; loaded into memory at startup for fast reads.
+Thread-safe via threading.Lock. LRU eviction at MAX_ENTRIES.
 """
 
 import hashlib
 import json
-import tempfile
+import threading
+from collections import OrderedDict
 from pathlib import Path
-
-# Use a stable directory under user home instead of OS tempdir (survives reboots)
-
 
 _cache_dir = Path.home() / ".book_translator"
 _cache_dir.mkdir(exist_ok=True)
 CACHE_FILE = _cache_dir / "translations.json"
-_cache: dict[str, str] = {}
+
+MAX_ENTRIES = 50_000
+_SAVE_EVERY = 100
+
+_lock = threading.Lock()
+_cache: OrderedDict[str, str] = OrderedDict()
 _new_entries = 0
-_SAVE_EVERY = 100  # persist to disk every N new entries
 
 
 def _load() -> None:
     global _cache
     try:
         if CACHE_FILE.exists():
-            _cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+            data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+            _cache = OrderedDict(data)
     except Exception:
-        _cache = {}
+        _cache = OrderedDict()
 
 
 def _save() -> None:
     try:
-        CACHE_FILE.write_text(json.dumps(_cache, ensure_ascii=False), encoding="utf-8")
+        CACHE_FILE.write_text(json.dumps(dict(_cache), ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
@@ -44,21 +48,31 @@ def _key(src: str, tgt: str, text: str) -> str:
 
 
 def get(src: str, tgt: str, text: str) -> str | None:
-    return _cache.get(_key(src, tgt, text))
+    with _lock:
+        k = _key(src, tgt, text)
+        val = _cache.get(k)
+        if val is not None:
+            _cache.move_to_end(k)
+        return val
 
 
 def set(src: str, tgt: str, text: str, translation: str) -> None:
     global _new_entries
-    _cache[_key(src, tgt, text)] = translation
-    _new_entries += 1
-    if _new_entries >= _SAVE_EVERY:
-        _save()
-        _new_entries = 0
+    with _lock:
+        k = _key(src, tgt, text)
+        _cache[k] = translation
+        _cache.move_to_end(k)
+        while len(_cache) > MAX_ENTRIES:
+            _cache.popitem(last=False)
+        _new_entries += 1
+        if _new_entries >= _SAVE_EVERY:
+            _save()
+            _new_entries = 0
 
 
 def flush() -> None:
-    """Force-write cache to disk."""
-    _save()
+    with _lock:
+        _save()
 
 
 def stats() -> dict:

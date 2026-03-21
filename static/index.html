@@ -4,55 +4,93 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Book Translator</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'><stop offset='0%25' stop-color='%23c9a227'/><stop offset='100%25' stop-color='%23a07b1a'/></linearGradient></defs><rect x='20' y='10' width='55' height='75' rx='4' fill='url(%23g)' opacity='.9'/><rect x='28' y='18' width='39' height='3' rx='1.5' fill='%230c0c10' opacity='.5'/><rect x='28' y='25' width='32' height='2' rx='1' fill='%230c0c10' opacity='.3'/><rect x='28' y='30' width='36' height='2' rx='1' fill='%230c0c10' opacity='.3'/><rect x='28' y='35' width='28' height='2' rx='1' fill='%230c0c10' opacity='.3'/><path d='M55 55 L75 45 L75 80 L55 90 Z' fill='%23dddde8' opacity='.85'/><path d='M55 55 L35 45 L35 80 L55 90 Z' fill='%23b0b0c8' opacity='.75'/></svg>" />
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600&display=swap');
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0c0c10;
-      --surface: #13131c;
-      --border: #22222e;
+      --bg: #0a0a0f;
+      --surface: #111118;
+      --surface-raised: #16161f;
+      --border: #1e1e2a;
+      --border-hover: #2a2a3a;
       --accent: #c9a227;
-      --accent-dim: rgba(201,162,39,.12);
-      --text: #dddde8;
-      --muted: #6e6e88;
+      --accent-glow: rgba(201,162,39,.15);
+      --accent-dim: rgba(201,162,39,.08);
+      --text: #e0e0ec;
+      --text-secondary: #a0a0b8;
+      --muted: #5e5e78;
       --error: #e05555;
       --ok: #5bbf7a;
-      --radius: 10px;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
+      --font-body: 'Inter', 'Segoe UI', system-ui, sans-serif;
     }
+
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-family: var(--font-body);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 3rem 1rem 4rem;
+      padding: 2.5rem 1rem 4rem;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(201,162,39,.06) 0%, transparent 60%),
+        radial-gradient(circle at 50% 100%, rgba(201,162,39,.03) 0%, transparent 40%);
     }
 
+    /* Header */
     header {
       text-align: center;
-      margin-bottom: 2.5rem;
+      margin-bottom: 2.2rem;
+    }
+    .logo-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 52px;
+      height: 52px;
+      margin-bottom: .75rem;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(201,162,39,.15) 0%, rgba(201,162,39,.05) 100%);
+      border: 1px solid rgba(201,162,39,.2);
+    }
+    .logo-mark svg {
+      width: 28px;
+      height: 28px;
     }
     header h1 {
-      font-size: 1.65rem;
-      font-weight: 600;
+      font-family: var(--font-display);
+      font-size: 2rem;
+      font-weight: 700;
       letter-spacing: -.02em;
       color: var(--text);
+      line-height: 1.1;
     }
-    header h1 span { color: var(--accent); }
+    header h1 span {
+      color: var(--accent);
+      font-style: italic;
+    }
     header p {
       color: var(--muted);
       font-size: .85rem;
-      margin-top: .35rem;
+      margin-top: .5rem;
+      letter-spacing: .02em;
     }
 
+    /* Card */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 1.75rem;
       width: 100%;
-      max-width: 580px;
+      max-width: 560px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2);
     }
 
     /* Tabs */
@@ -60,42 +98,46 @@
       display: flex;
       gap: 2px;
       background: var(--bg);
-      border-radius: 7px;
+      border-radius: var(--radius-sm);
       padding: 3px;
       margin-bottom: 1.5rem;
     }
     .tab {
       flex: 1;
-      padding: .45rem;
+      padding: .5rem;
       text-align: center;
-      border-radius: 5px;
-      font-size: .83rem;
+      border-radius: 6px;
+      font-size: .82rem;
       font-weight: 500;
       cursor: pointer;
       color: var(--muted);
       border: none;
       background: transparent;
-      transition: .12s;
+      transition: all .15s ease;
+      font-family: var(--font-body);
     }
+    .tab:hover { color: var(--text-secondary); }
     .tab.active {
-      background: var(--surface);
+      background: var(--surface-raised);
       color: var(--text);
-      box-shadow: 0 1px 3px rgba(0,0,0,.5);
+      box-shadow: 0 1px 4px rgba(0,0,0,.4);
     }
 
     /* Drop zone */
     .drop-zone {
       border: 1.5px dashed var(--border);
       border-radius: var(--radius);
-      padding: 2rem 1.5rem;
+      padding: 2.2rem 1.5rem;
       text-align: center;
       cursor: pointer;
       position: relative;
-      transition: .15s;
+      transition: all .2s ease;
+      background: var(--accent-dim);
     }
     .drop-zone:hover, .drop-zone.drag-over {
       border-color: var(--accent);
-      background: var(--accent-dim);
+      background: var(--accent-glow);
+      box-shadow: 0 0 20px rgba(201,162,39,.08);
     }
     .drop-zone input[type=file] {
       position: absolute;
@@ -106,19 +148,21 @@
       height: 100%;
     }
     .drop-icon {
-      font-size: 1.8rem;
-      margin-bottom: .5rem;
-      opacity: .6;
+      margin-bottom: .6rem;
+      opacity: .7;
+      transition: opacity .15s;
     }
+    .drop-zone:hover .drop-icon { opacity: 1; }
     .drop-label {
-      color: var(--muted);
-      font-size: .9rem;
+      color: var(--text-secondary);
+      font-size: .88rem;
     }
-    .drop-label strong { color: var(--text); }
+    .drop-label strong { color: var(--text); font-weight: 500; }
     .drop-formats {
-      font-size: .75rem;
+      font-size: .74rem;
       color: var(--muted);
-      margin-top: .25rem;
+      margin-top: .35rem;
+      letter-spacing: .03em;
     }
 
     /* File row */
@@ -126,47 +170,59 @@
       display: none;
       align-items: center;
       gap: .9rem;
-      background: var(--accent-dim);
-      border: 1px solid rgba(201,162,39,.2);
-      border-radius: 8px;
-      padding: .65rem .9rem;
+      background: linear-gradient(135deg, rgba(201,162,39,.1) 0%, rgba(201,162,39,.04) 100%);
+      border: 1px solid rgba(201,162,39,.18);
+      border-radius: var(--radius-sm);
+      padding: .7rem .9rem;
       margin-top: .9rem;
     }
     .file-row.visible { display: flex; }
-    .cover-thumb { width: 38px; height: 52px; object-fit: cover; border-radius: 3px; flex-shrink: 0; }
-    .cover-placeholder { width: 38px; height: 52px; background: var(--border); border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; }
+    .cover-thumb { width: 38px; height: 52px; object-fit: cover; border-radius: 4px; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+    .cover-placeholder { width: 38px; height: 52px; background: var(--border); border-radius: 4px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .cover-placeholder svg { width: 18px; height: 18px; opacity: .5; }
     .file-meta { flex: 1; min-width: 0; }
-    .file-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .88rem; }
-    .file-size { color: var(--muted); font-size: .76rem; margin-top: .1rem; }
-    .remove-btn { cursor: pointer; color: var(--muted); font-size: 1rem; flex-shrink: 0; background: none; border: none; line-height: 1; }
-    .remove-btn:hover { color: var(--error); }
+    .file-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .86rem; }
+    .file-size { color: var(--muted); font-size: .74rem; margin-top: .15rem; }
+    .remove-btn { cursor: pointer; color: var(--muted); font-size: .85rem; flex-shrink: 0; background: none; border: none; line-height: 1; padding: .25rem; border-radius: 4px; transition: all .12s; }
+    .remove-btn:hover { color: var(--error); background: rgba(224,85,85,.1); }
 
     /* Fields */
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: .9rem; margin-top: 1rem; }
-    .field label { display: block; font-size: .74rem; color: var(--muted); margin-bottom: .3rem; text-transform: uppercase; letter-spacing: .06em; }
+    .field label {
+      display: block;
+      font-size: .72rem;
+      color: var(--muted);
+      margin-bottom: .3rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-weight: 500;
+    }
     select {
       width: 100%;
       background: var(--bg);
       border: 1px solid var(--border);
       color: var(--text);
       border-radius: 7px;
-      padding: .45rem .65rem;
-      font-size: .88rem;
+      padding: .48rem .65rem;
+      font-size: .86rem;
+      font-family: var(--font-body);
       appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%236e6e88' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%235e5e78' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right .65rem center;
       cursor: pointer;
+      transition: border-color .12s;
     }
+    select:hover { border-color: var(--border-hover); }
     select:focus { outline: none; border-color: var(--accent); }
 
     /* Toggle */
-    .toggle-row { display: flex; align-items: center; gap: .55rem; margin-top: 1rem; }
-    .toggle-label { font-size: .85rem; color: var(--muted); cursor: pointer; user-select: none; }
+    .toggle-row { display: flex; align-items: center; gap: .6rem; margin-top: 1rem; }
+    .toggle-label { font-size: .84rem; color: var(--text-secondary); cursor: pointer; user-select: none; }
     .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
     .toggle input { opacity: 0; width: 0; height: 0; }
-    .slider { position: absolute; inset: 0; background: var(--border); border-radius: 99px; cursor: pointer; transition: .15s; }
-    .slider::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .15s; }
+    .slider { position: absolute; inset: 0; background: var(--border); border-radius: 99px; cursor: pointer; transition: .2s; }
+    .slider::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .2s; }
     .toggle input:checked + .slider { background: var(--accent); }
     .toggle input:checked + .slider::before { transform: translateX(16px); }
 
@@ -174,126 +230,166 @@
     .btn {
       width: 100%;
       margin-top: 1.1rem;
-      padding: .75rem;
-      background: var(--accent);
+      padding: .78rem;
+      background: linear-gradient(135deg, var(--accent) 0%, #b08e1f 100%);
       color: #0c0c10;
       border: none;
-      border-radius: 7px;
-      font-size: .92rem;
+      border-radius: var(--radius-sm);
+      font-size: .9rem;
       font-weight: 600;
       cursor: pointer;
-      transition: .12s;
+      transition: all .15s ease;
       letter-spacing: .01em;
+      font-family: var(--font-body);
+      box-shadow: 0 2px 8px rgba(201,162,39,.2);
     }
-    .btn:hover:not(:disabled) { opacity: .88; }
-    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn:hover:not(:disabled) { box-shadow: 0 4px 16px rgba(201,162,39,.3); transform: translateY(-1px); }
+    .btn:active:not(:disabled) { transform: translateY(0); }
+    .btn:disabled { opacity: .3; cursor: not-allowed; box-shadow: none; }
     .btn-secondary {
       background: transparent;
       border: 1px solid var(--border);
       color: var(--text);
       font-weight: 500;
+      box-shadow: none;
     }
-    .btn-secondary:hover:not(:disabled) { background: var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--surface-raised); border-color: var(--border-hover); box-shadow: none; transform: none; }
 
     /* Progress */
     .progress-wrap { display: none; margin-top: 1rem; }
     .progress-wrap.visible { display: block; }
-    .progress-label { display: flex; justify-content: space-between; font-size: .78rem; color: var(--muted); margin-bottom: .3rem; }
-    .progress-bg { background: var(--border); border-radius: 99px; height: 5px; overflow: hidden; }
-    .progress-fill { height: 100%; background: var(--accent); border-radius: 99px; transition: width .5s ease; width: 0%; }
-    .timer-row { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-top: .3rem; }
+    .progress-label { display: flex; justify-content: space-between; font-size: .78rem; color: var(--muted); margin-bottom: .35rem; }
+    .progress-bg { background: var(--border); border-radius: 99px; height: 4px; overflow: hidden; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #d4b340); border-radius: 99px; transition: width .5s ease; width: 0%; }
+    .timer-row { display: flex; justify-content: space-between; font-size: .73rem; color: var(--muted); margin-top: .35rem; }
     .timer-row span:empty { display: none; }
 
-    .status { margin-top: .75rem; font-size: .85rem; text-align: center; min-height: 1.1em; }
+    .status { margin-top: .75rem; font-size: .84rem; text-align: center; min-height: 1.1em; word-break: break-word; }
     .status.error { color: var(--error); }
     .status.success { color: var(--ok); }
+    .status.warning { color: var(--accent); }
 
     /* Convert panel */
     .calibre-info { margin-top: .75rem; font-size: .8rem; color: var(--muted); }
-    .badge { display: inline-flex; align-items: center; gap: .25rem; font-size: .74rem; padding: .18rem .5rem; border-radius: 99px; }
-    .badge.green { background: rgba(91,191,122,.1); color: var(--ok); border: 1px solid rgba(91,191,122,.25); }
-    .badge.yellow { background: rgba(201,162,39,.1); color: var(--accent); border: 1px solid rgba(201,162,39,.25); }
+    .badge { display: inline-flex; align-items: center; gap: .3rem; font-size: .73rem; padding: .2rem .55rem; border-radius: 99px; font-weight: 500; }
+    .badge.green { background: rgba(91,191,122,.08); color: var(--ok); border: 1px solid rgba(91,191,122,.2); }
+    .badge.yellow { background: rgba(201,162,39,.08); color: var(--accent); border: 1px solid rgba(201,162,39,.2); }
 
-    /* Features collapsible */
+    /* Features */
     .features-details {
       width: 100%;
-      max-width: 580px;
-      margin-top: 1.5rem;
+      max-width: 560px;
+      margin-top: 1.8rem;
     }
     .features-details summary {
       cursor: pointer;
       color: var(--muted);
-      font-size: .82rem;
+      font-size: .8rem;
       text-align: center;
       list-style: none;
       user-select: none;
       transition: .15s;
+      letter-spacing: .03em;
     }
     .features-details summary::-webkit-details-marker { display: none; }
-    .features-details summary::after {
-      content: ' +';
-      color: var(--accent);
-    }
-    .features-details[open] summary::after {
-      content: ' −';
-    }
-    .features-details summary:hover { color: var(--text); }
+    .features-details summary::after { content: ' +'; color: var(--accent); font-weight: 600; }
+    .features-details[open] summary::after { content: ' -'; }
+    .features-details summary:hover { color: var(--text-secondary); }
     .features-list {
       list-style: none;
       margin-top: .8rem;
       padding: 0;
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: .4rem;
     }
     .features-list li {
-      font-size: .8rem;
-      color: var(--muted);
-      padding: .35rem .7rem;
+      font-size: .78rem;
+      color: var(--text-secondary);
+      padding: .45rem .7rem;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
+      transition: border-color .12s;
     }
+    .features-list li:hover { border-color: var(--border-hover); }
     .features-list li strong {
-      color: var(--text);
-      font-weight: 500;
+      color: var(--accent);
+      font-weight: 600;
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      display: block;
+      margin-bottom: .1rem;
     }
+    .features-list li:last-child:nth-child(odd) { grid-column: 1 / -1; }
 
-    footer { margin-top: 2.5rem; color: var(--muted); font-size: .74rem; text-align: center; }
-    footer a { color: var(--muted); text-decoration: none; }
-    footer a:hover { color: var(--text); }
+    footer {
+      margin-top: 2.5rem;
+      color: var(--muted);
+      font-size: .72rem;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    footer a { color: var(--muted); text-decoration: none; transition: color .12s; }
+    footer a:hover { color: var(--text-secondary); }
+    footer .dot { opacity: .3; }
 
-    @media(max-width:480px) { .row { grid-template-columns: 1fr; } }
+    @media(max-width:520px) {
+      .row { grid-template-columns: 1fr; }
+      .features-list { grid-template-columns: 1fr; }
+      header h1 { font-size: 1.65rem; }
+    }
   </style>
 </head>
 <body>
 
 <header>
+  <div class="logo-mark">
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 3L4 7V19L12 23L20 19V7L12 3Z" stroke="#c9a227" stroke-width="1.5" fill="none"/>
+      <path d="M12 3V23" stroke="#c9a227" stroke-width="1.2" opacity=".5"/>
+      <path d="M4 7L12 11L20 7" stroke="#c9a227" stroke-width="1.2" opacity=".4"/>
+      <line x1="7" y1="10" x2="11" y2="12" stroke="#c9a227" stroke-width="1" opacity=".3"/>
+      <line x1="7" y1="13" x2="11" y2="15" stroke="#c9a227" stroke-width="1" opacity=".3"/>
+      <line x1="7" y1="16" x2="10" y2="17.5" stroke="#c9a227" stroke-width="1" opacity=".3"/>
+    </svg>
+  </div>
   <h1>Book <span>Translator</span></h1>
-  <p>EPUB & PDF — translated to your language, Kindle-ready</p>
+  <p>EPUB & PDF translated to your language, Kindle-ready</p>
 </header>
 
 <div class="card">
   <div class="tabs">
     <button class="tab active" onclick="switchTab('translate', this)">Translate</button>
-    <button class="tab" onclick="switchTab('convert', this)">Convert Format</button>
+    <button class="tab" onclick="switchTab('convert', this)">Convert</button>
   </div>
 
   <div class="drop-zone" id="dropZone">
     <input type="file" id="fileInput" accept=".epub,.pdf" />
-    <div class="drop-icon">⬆</div>
-    <div class="drop-label"><strong>Click to upload</strong> or drag & drop</div>
-    <div class="drop-formats">EPUB · PDF — max 50 MB</div>
+    <div class="drop-icon">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 19.5C4 18.837 4.26339 18.2011 4.73223 17.7322C5.20107 17.2634 5.83696 17 6.5 17H20" stroke="#c9a227" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M6.5 2H20V22H6.5C5.83696 22 5.20107 21.7366 4.73223 21.2678C4.26339 20.7989 4 20.163 4 19.5V4.5C4 3.83696 4.26339 3.20107 4.73223 2.73223C5.20107 2.26339 5.83696 2 6.5 2Z" stroke="#c9a227" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M12 8V14M9 11L12 8L15 11" stroke="#c9a227" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" opacity=".7"/>
+      </svg>
+    </div>
+    <div class="drop-label"><strong>Drop your book here</strong> or click to browse</div>
+    <div class="drop-formats">EPUB  &middot;  PDF  &middot;  up to 50 MB</div>
   </div>
 
   <div class="file-row" id="fileRow">
     <img id="coverImg" class="cover-thumb" style="display:none" alt="cover" />
-    <div class="cover-placeholder" id="coverPlaceholder">📄</div>
+    <div class="cover-placeholder" id="coverPlaceholder">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#5e5e78" stroke-width="1.5"/><path d="M14 2v6h6" stroke="#5e5e78" stroke-width="1.5"/></svg>
+    </div>
     <div class="file-meta">
       <div class="file-name" id="fileName"></div>
       <div class="file-size" id="fileSize"></div>
     </div>
-    <button class="remove-btn" id="removeFile" title="Remove">✕</button>
+    <button class="remove-btn" id="removeFile" title="Remove">&times;</button>
   </div>
 
   <!-- TRANSLATE panel -->
@@ -315,11 +411,11 @@
         <span class="slider"></span>
       </label>
       <span class="toggle-label" onclick="document.getElementById('bilingualToggle').click()">
-        Bilingual — original & translation side by side
+        Bilingual mode
       </span>
     </div>
 
-    <button class="btn" id="translateBtn" disabled>Translate</button>
+    <button class="btn" id="translateBtn" disabled>Translate Book</button>
   </div>
 
   <!-- CONVERT panel -->
@@ -333,13 +429,13 @@
         </select>
       </div>
     </div>
-    <div class="calibre-info" id="calibreInfo">Checking Calibre…</div>
-    <button class="btn btn-secondary" id="convertBtn" disabled>Convert</button>
+    <div class="calibre-info" id="calibreInfo">Checking engine...</div>
+    <button class="btn btn-secondary" id="convertBtn" disabled>Convert Format</button>
   </div>
 
   <div class="progress-wrap" id="progressWrap">
     <div class="progress-label">
-      <span id="progressText">Processing…</span>
+      <span id="progressText">Processing...</span>
       <span id="progressPct">0%</span>
     </div>
     <div class="progress-bg"><div class="progress-fill" id="progressFill"></div></div>
@@ -355,15 +451,17 @@
 <details class="features-details">
   <summary>Features</summary>
   <ul class="features-list">
-    <li><strong>Cover Preserved</strong> — original book cover in every output</li>
-    <li><strong>Kindle Ready</strong> — EPUB output works on all e-readers</li>
-    <li><strong>Format Convert</strong> — EPUB to PDF without translating</li>
-    <li><strong>Smart Cache</strong> — re-uploads skip already-translated text</li>
-    <li><strong>Bilingual Mode</strong> — original & translation side by side</li>
+    <li><strong>Cover Preserved</strong>Original book cover in every output</li>
+    <li><strong>Kindle Ready</strong>Works on all e-readers</li>
+    <li><strong>Format Convert</strong>EPUB to PDF and back</li>
+    <li><strong>Smart Cache</strong>Skip already-translated text</li>
+    <li><strong>Bilingual</strong>Original & translation side by side</li>
   </ul>
 </details>
 
 <footer>
+  <span>Book Translator</span>
+  <span class="dot">&middot;</span>
   <a href="https://github.com/gabrielcnb/kindle-book-translator" target="_blank">GitHub</a>
 </footer>
 
@@ -371,13 +469,11 @@
   let selectedFile = null;
   let activeTab = 'translate';
 
-  // Timer + ETA state
   let timerStart = null;
   let timerInterval = null;
   let smoothedEta = null;
-  const ETA_ALPHA = 0.3; // exponential moving average smoothing
+  const ETA_ALPHA = 0.3;
 
-  // Load languages
   fetch('/languages').then(r => r.json()).then(({ languages }) => {
     const src = document.getElementById('sourceLang');
     const tgt = document.getElementById('targetLang');
@@ -392,11 +488,10 @@
   fetch('/info').then(r => r.json()).then(info => {
     const el = document.getElementById('calibreInfo');
     el.innerHTML = info.calibre_available
-      ? '<span class="badge green">✓ Calibre — high-quality conversion</span>'
-      : '<span class="badge yellow">⚠ Calibre not found — <a href="https://calibre-ebook.com/download" target="_blank" style="color:var(--accent)">install for best results</a></span>';
+      ? '<span class="badge green">Calibre available</span>'
+      : '<span class="badge yellow">Calibre not found</span>';
   }).catch(() => {});
 
-  // Tabs
   function switchTab(tab, btn) {
     activeTab = tab;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -412,7 +507,6 @@
     document.getElementById('convertBtn').disabled = !has;
   }
 
-  // File handling
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
 
@@ -462,7 +556,6 @@
     } catch {}
   }
 
-  // Translate
   document.getElementById('translateBtn').addEventListener('click', async () => {
     if (!selectedFile) return;
     const fd = new FormData();
@@ -473,7 +566,6 @@
     await runJob('/translate', fd, 'Translating');
   });
 
-  // Convert
   document.getElementById('convertBtn').addEventListener('click', async () => {
     if (!selectedFile) return;
     const fd = new FormData();
@@ -482,17 +574,19 @@
     await runJob('/convert', fd, 'Converting');
   });
 
-  // Job runner
   async function runJob(endpoint, formData, label) {
     setRunning(true);
-    resetProgress(label + '…');
+    resetProgress(label + '...');
     showStatus('');
     startTimer();
     try {
       const res = await fetch(endpoint, { method: 'POST', body: formData });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(err.detail || 'Failed');
+        const msg = err.detail || 'Failed';
+        if (res.status === 429) throw new Error('Rate limit exceeded. Please wait a minute before trying again.');
+        if (res.status === 503) throw new Error('Server is busy processing other books. Please try again in a few minutes.');
+        throw new Error(msg);
       }
       const { job_id } = await res.json();
       const downloadUrl = await listenSSE(job_id, label);
@@ -516,7 +610,7 @@
         if (d.heartbeat) return;
         if (d.status === 'running') {
           setProgress(d.progress);
-          document.getElementById('progressText').textContent = `${label}… ${d.progress}%`;
+          document.getElementById('progressText').textContent = `${label}... ${d.progress}%`;
         } else if (d.status === 'done') {
           setProgress(100);
           document.getElementById('progressText').textContent = 'Done!';
@@ -532,12 +626,12 @@
         es.close();
         if (attempt < 4) {
           const delay = 1500 * (attempt + 1);
-          document.getElementById('progressText').textContent = `Reconnecting (${attempt + 1}/4)…`;
+          document.getElementById('progressText').textContent = `Reconnecting (${attempt + 1}/4)...`;
           setTimeout(() => {
             listenSSE(job_id, label, attempt + 1).then(resolve).catch(reject);
           }, delay);
         } else {
-          reject(new Error('Connection lost after retries. The file may still be processing — try refreshing.'));
+          reject(new Error('Connection lost after retries. The file may still be processing.'));
         }
       };
     });
@@ -548,7 +642,6 @@
     if (!res.ok) throw new Error('Download failed');
     const blob = await res.blob();
     const disposition = res.headers.get('content-disposition') || '';
-    // Try multiple patterns: quoted, unquoted, UTF-8 encoded
     const match = disposition.match(/filename\*?=(?:UTF-8''|"?)([^";]+)"?/i);
     const origExt = selectedFile ? selectedFile.name.split('.').pop().toLowerCase() : 'pdf';
     const fallback = 'translated.' + origExt;
@@ -561,7 +654,6 @@
     a.remove();
   }
 
-  // UI helpers
   function setRunning(on) {
     document.getElementById('translateBtn').disabled = on;
     document.getElementById('convertBtn').disabled = on;
@@ -624,7 +716,6 @@
     }
     const elapsed = (Date.now() - timerStart) / 1000;
     const rawEta = (elapsed / progress) * (100 - progress);
-    // Exponential moving average
     if (smoothedEta === null) {
       smoothedEta = rawEta;
     } else {

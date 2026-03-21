@@ -1,10 +1,12 @@
 import asyncio
 import json
 import tempfile
+import time
 import uuid
+from collections import defaultdict
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +18,7 @@ from app.services.converter import epub_to_pdf, pdf_to_epub, calibre_available
 from app.services.cover import extract_epub_cover, extract_pdf_cover
 from app import cache
 
-app = FastAPI(title="Kindle Book Translator", version="2.0.0")
+app = FastAPI(title="Kindle Book Translator", version="2.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,9 +34,41 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 MAX_SIZE = 50 * 1024 * 1024  # 50 MB
+JOB_TTL = 3600  # 1 hour
+MAX_CONCURRENT_JOBS = 3
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_MAX = 5  # max requests per window per IP
 
 jobs: dict[str, dict] = {}
 job_queues: dict[str, asyncio.Queue] = {}
+_rate_limits: dict[str, list[float]] = defaultdict(list)
+
+
+def _cleanup_old_jobs():
+    now = time.time()
+    expired = [jid for jid, j in jobs.items()
+               if j.get("status") in ("done", "error") and now - j.get("created_at", now) > JOB_TTL]
+    for jid in expired:
+        job = jobs.pop(jid, {})
+        fp = job.get("file_path")
+        if fp:
+            try:
+                Path(fp).unlink(missing_ok=True)
+            except Exception:
+                pass
+        job_queues.pop(jid, None)
+
+
+def _check_rate_limit(client_ip: str):
+    now = time.time()
+    _rate_limits[client_ip] = [t for t in _rate_limits[client_ip] if now - t < RATE_LIMIT_WINDOW]
+    if len(_rate_limits[client_ip]) >= RATE_LIMIT_MAX:
+        raise HTTPException(429, "Too many requests. Please wait a minute.")
+    _rate_limits[client_ip].append(now)
+
+
+def _active_jobs_count() -> int:
+    return sum(1 for j in jobs.values() if j.get("status") == "running")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -80,11 +114,12 @@ async def _run_translation(
         jobs[job_id] = {
             "status": "done", "progress": 100,
             "file_path": str(out_path), "filename": out_name, "media_type": media,
+            "created_at": time.time(),
         }
         _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
-        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e)}
+        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e), "created_at": time.time()}
         _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
         job_queues.pop(job_id, None)
@@ -120,11 +155,12 @@ async def _run_conversion(
         jobs[job_id] = {
             "status": "done", "progress": 100,
             "file_path": str(out_path), "filename": out_name, "media_type": media,
+            "created_at": time.time(),
         }
         _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
-        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e)}
+        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e), "created_at": time.time()}
         _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
         job_queues.pop(job_id, None)
@@ -134,8 +170,14 @@ async def _run_conversion(
 # Routes
 # ──────────────────────────────────────────────────────────────────────────────
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "active_jobs": _active_jobs_count(), "version": "2.1.0"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    _cleanup_old_jobs()
     return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
@@ -149,7 +191,7 @@ async def info():
     return {
         "calibre_available": calibre_available(),
         "cache_stats": cache.stats(),
-        "version": "2.0.0",
+        "version": "2.1.0",
     }
 
 
@@ -178,12 +220,20 @@ async def get_cover(file: UploadFile = File(...)):
 
 @app.post("/translate")
 async def start_translation(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     source_lang: str = Form("auto"),
     target_lang: str = Form("pt"),
     bilingual: str = Form("false"),
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
+    _cleanup_old_jobs()
+
+    if _active_jobs_count() >= MAX_CONCURRENT_JOBS:
+        raise HTTPException(503, "Server busy. Please try again in a few minutes.")
+
     content = await file.read()
     if len(content) > MAX_SIZE:
         raise HTTPException(400, "File too large. Maximum size is 50 MB.")
@@ -194,7 +244,7 @@ async def start_translation(
         raise HTTPException(400, "Only EPUB and PDF files are supported.")
 
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "running", "progress": 0}
+    jobs[job_id] = {"status": "running", "progress": 0, "created_at": time.time()}
     job_queues[job_id] = asyncio.Queue()
 
     background_tasks.add_task(
@@ -207,11 +257,19 @@ async def start_translation(
 
 @app.post("/convert")
 async def start_conversion(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     output_format: str = Form(...),
 ):
-    """Convert EPUB↔PDF without translating."""
+    """Convert EPUB<->PDF without translating."""
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
+    _cleanup_old_jobs()
+
+    if _active_jobs_count() >= MAX_CONCURRENT_JOBS:
+        raise HTTPException(503, "Server busy. Please try again in a few minutes.")
+
     content = await file.read()
     if len(content) > MAX_SIZE:
         raise HTTPException(400, "File too large.")
@@ -226,7 +284,7 @@ async def start_conversion(
         raise HTTPException(400, "Only EPUB and PDF are supported.")
 
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "running", "progress": 0}
+    jobs[job_id] = {"status": "running", "progress": 0, "created_at": time.time()}
     job_queues[job_id] = asyncio.Queue()
 
     background_tasks.add_task(

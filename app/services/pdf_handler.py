@@ -305,12 +305,22 @@ async def translate_pdf(
                 "align": align,
             }
             if font_path:
-                # Unique fontname per variant to avoid conflicts
                 kwargs["fontname"] = f"s_{variant}"
                 kwargs["fontfile"] = font_path
             else:
-                kwargs["fontname"] = "helv"
-                kwargs["encoding"] = fitz.TEXT_ENCODING_LATIN
+                # helv doesn't support Unicode — try DejaVuSans as universal fallback
+                _unicode_fallbacks = [
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "C:/Windows/Fonts/arial.ttf",
+                    "C:/Windows/Fonts/segoeui.ttf",
+                ]
+                fallback = next((f for f in _unicode_fallbacks if os.path.exists(f)), None)
+                if fallback:
+                    kwargs["fontname"] = "s_fallback"
+                    kwargs["fontfile"] = fallback
+                else:
+                    kwargs["fontname"] = "helv"
+                    kwargs["encoding"] = fitz.TEXT_ENCODING_LATIN
 
             # Short text: use insert_text (no clipping) instead of textbox
             if len(translated) < 30:
