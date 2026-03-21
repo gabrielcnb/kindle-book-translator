@@ -5,6 +5,7 @@ Falls back to PyMuPDF / ebooklib if Calibre is not installed.
 
 import asyncio
 import io
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -116,7 +117,11 @@ async def pdf_to_epub(pdf_bytes: bytes, title: str = "Book") -> bytes:
     book.add_item(epub_lib.EpubNav())
     book.spine = ["nav"] + chapters
 
-    out = io.BytesIO()
-    epub_lib.write_epub(out, book)
-    out.seek(0)
-    return out.read()
+    tmp_out = tempfile.NamedTemporaryFile(suffix=".epub", delete=False)
+    tmp_out.close()
+    try:
+        epub_lib.write_epub(tmp_out.name, book)
+        with open(tmp_out.name, "rb") as f:
+            return f.read()
+    finally:
+        os.unlink(tmp_out.name)

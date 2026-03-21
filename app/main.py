@@ -17,6 +17,7 @@ from app.services.pdf_handler import translate_pdf
 from app.services.converter import epub_to_pdf, pdf_to_epub, calibre_available
 from app.services.cover import extract_epub_cover, extract_pdf_cover
 from app import cache
+from app.error_log import log_error, get_recent, verify_key
 
 app = FastAPI(title="Kindle Book Translator", version="2.1.0")
 
@@ -119,6 +120,7 @@ async def _run_translation(
         _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
+        log_error("/translate", e, filename=filename, extra={"ext": ext, "lang": f"{source_lang}->{target_lang}"})
         jobs[job_id] = {"status": "error", "progress": 0, "error": str(e), "created_at": time.time()}
         _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
@@ -160,6 +162,7 @@ async def _run_conversion(
         _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
+        log_error("/convert", e, filename=filename, extra={"src": src_ext, "out": out_ext})
         jobs[job_id] = {"status": "error", "progress": 0, "error": str(e), "created_at": time.time()}
         _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
@@ -342,3 +345,11 @@ async def download_result(job_id: str):
         filename=job["filename"],
         media_type=job["media_type"],
     )
+
+
+@app.get("/logs")
+async def get_logs(request: Request, n: int = 20):
+    key = request.headers.get("X-Log-Key", "")
+    if not verify_key(key):
+        raise HTTPException(403, "Forbidden")
+    return {"errors": get_recent(min(n, 100))}

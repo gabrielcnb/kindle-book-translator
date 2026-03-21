@@ -100,7 +100,14 @@ async def translate_epub(
     progress_callback: Callable[[int], None] | None = None,
     bilingual: bool = False,
 ) -> bytes:
-    book = epub.read_epub(io.BytesIO(file_bytes))
+    tmp_in = tempfile.NamedTemporaryFile(suffix=".epub", delete=False)
+    tmp_in.close()
+    try:
+        with open(tmp_in.name, "wb") as f:
+            f.write(file_bytes)
+        book = epub.read_epub(tmp_in.name)
+    finally:
+        os.unlink(tmp_in.name)
     items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
     total = max(len(items), 1)
 
