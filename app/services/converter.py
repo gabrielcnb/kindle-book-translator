@@ -29,7 +29,12 @@ async def convert_with_calibre(
         dst = Path(tmp) / f"output{output_ext}"
         src.write_bytes(input_bytes)
 
-        cmd = ["ebook-convert", str(src), str(dst)] + (extra_args or [])
+        # Use xvfb-run on headless Linux (Calibre needs a display)
+        base_cmd = ["ebook-convert", str(src), str(dst)] + (extra_args or [])
+        if shutil.which("xvfb-run"):
+            cmd = ["xvfb-run", "--auto-servernum"] + base_cmd
+        else:
+            cmd = base_cmd
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
