@@ -6,6 +6,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     calibre \
     xvfb \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-por \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

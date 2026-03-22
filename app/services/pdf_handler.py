@@ -2,10 +2,18 @@ import asyncio
 import io
 import os
 import re
+import shutil
 import zipfile
 import fitz  # PyMuPDF
 from typing import Callable
 from app.translator import translate_text
+
+try:
+    import pytesseract
+    from PIL import Image
+    HAS_TESSERACT = shutil.which("tesseract") is not None
+except ImportError:
+    HAS_TESSERACT = False
 
 CHUNK_TARGET = 4000
 BATCH_SEP = "KBTXSEP"
@@ -95,6 +103,81 @@ def _detect_alignment(block_bbox, page_width, text: str) -> int:
     return fitz.TEXT_ALIGN_LEFT
 
 
+# ── OCR for image-based PDFs ───────────────────────────────────────────────
+
+def _is_image_pdf(doc: fitz.Document, sample_pages: int = 5) -> bool:
+    """Check if a PDF is image-based (scanned) by sampling pages for text."""
+    if len(doc) == 0:
+        return False
+    total_chars = 0
+    pages_to_check = min(len(doc), sample_pages)
+    for i in range(pages_to_check):
+        total_chars += len(doc[i].get_text().strip())
+    avg_chars = total_chars / pages_to_check
+    return avg_chars < 50
+
+
+def _ocr_page(page: fitz.Page, dpi: int = 300) -> list[dict]:
+    """OCR a single page and return text blocks with bounding boxes."""
+    if not HAS_TESSERACT:
+        return []
+
+    mat = fitz.Matrix(dpi / 72, dpi / 72)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
+    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+    # Get word-level bounding boxes from Tesseract
+    ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+
+    # Group words into lines, then lines into blocks
+    scale = 72 / dpi  # convert pixel coords back to PDF points
+    blocks_by_block_num: dict[int, list] = {}
+
+    for i in range(len(ocr_data["text"])):
+        word = ocr_data["text"][i].strip()
+        try:
+            conf = int(float(ocr_data["conf"][i]))
+        except (ValueError, TypeError):
+            conf = -1
+        if not word or conf < 30:
+            continue
+
+        block_num = ocr_data["block_num"][i]
+        x = ocr_data["left"][i] * scale
+        y = ocr_data["top"][i] * scale
+        w = ocr_data["width"][i] * scale
+        h = ocr_data["height"][i] * scale
+
+        if block_num not in blocks_by_block_num:
+            blocks_by_block_num[block_num] = {
+                "words": [], "x0": x, "y0": y, "x1": x + w, "y1": y + h
+            }
+        blk = blocks_by_block_num[block_num]
+        blk["words"].append(word)
+        blk["x0"] = min(blk["x0"], x)
+        blk["y0"] = min(blk["y0"], y)
+        blk["x1"] = max(blk["x1"], x + w)
+        blk["y1"] = max(blk["y1"], y + h)
+
+    result = []
+    page_width = page.rect.width
+    for blk in blocks_by_block_num.values():
+        text = " ".join(blk["words"])
+        if not text.strip():
+            continue
+        bbox = (blk["x0"], blk["y0"], blk["x1"], blk["y1"])
+        result.append({
+            "bbox": bbox,
+            "text": text,
+            "size": 11,
+            "color": 0,
+            "flags": 0,
+            "align": _detect_alignment(bbox, page_width, text),
+        })
+
+    return result
+
+
 # ── Main: overlay translation ──────────────────────────────────────────────
 
 async def translate_pdf(
@@ -110,6 +193,8 @@ async def translate_pdf(
     total_pages = len(src_doc)
     page_width = src_doc[0].rect.width if total_pages > 0 else 595
 
+    is_image = _is_image_pdf(src_doc)
+
     # Phase 1: Extract text blocks from all pages
     page_blocks: list[list[dict]] = []
     all_texts: list[str] = []
@@ -117,62 +202,67 @@ async def translate_pdf(
 
     for page_idx in range(total_pages):
         page = src_doc[page_idx]
-        blocks_data = []
 
-        for block in page.get_text("dict")["blocks"]:
-            if block.get("type") != 0:
-                continue
+        if is_image:
+            blocks_data = _ocr_page(page)
+        else:
+            blocks_data = []
+            for block in page.get_text("dict")["blocks"]:
+                if block.get("type") != 0:
+                    continue
 
-            # Collect text and dominant style (majority voting, not OR)
-            lines_text = []
-            dominant_size = 0
-            dominant_color = 0
-            span_count = 0
-            italic_count = 0
-            bold_count = 0
+                lines_text = []
+                dominant_size = 0
+                dominant_color = 0
+                span_count = 0
+                italic_count = 0
+                bold_count = 0
 
-            for line in block.get("lines", []):
-                line_parts = []
-                for span in line.get("spans", []):
-                    text = span.get("text", "")
-                    if text.strip():
-                        line_parts.append(text)
-                        dominant_size += span.get("size", 11)
-                        dominant_color += span.get("color", 0)
-                        flags = span.get("flags", 0)
-                        if flags & 2:
-                            italic_count += 1
-                        if flags & (1 << 4):
-                            bold_count += 1
-                        span_count += 1
-                if line_parts:
-                    lines_text.append(" ".join(line_parts))
+                for line in block.get("lines", []):
+                    line_parts = []
+                    for span in line.get("spans", []):
+                        text = span.get("text", "")
+                        if text.strip():
+                            line_parts.append(text)
+                            dominant_size += span.get("size", 11)
+                            dominant_color += span.get("color", 0)
+                            flags = span.get("flags", 0)
+                            if flags & 2:
+                                italic_count += 1
+                            if flags & (1 << 4):
+                                bold_count += 1
+                            span_count += 1
+                    if line_parts:
+                        lines_text.append(" ".join(line_parts))
 
-            full_text = " ".join(lines_text).strip()
-            if not full_text:
-                continue
+                full_text = " ".join(lines_text).strip()
+                if not full_text:
+                    continue
 
-            avg_size = dominant_size / span_count if span_count else 11
-            avg_color = int(dominant_color / span_count) if span_count else 0
-            # Majority voting for flags
-            majority_flags = 0
-            if italic_count > span_count / 2:
-                majority_flags |= 2
-            if bold_count > span_count / 2:
-                majority_flags |= (1 << 4)
+                avg_size = dominant_size / span_count if span_count else 11
+                avg_color = int(dominant_color / span_count) if span_count else 0
+                majority_flags = 0
+                if italic_count > span_count / 2:
+                    majority_flags |= 2
+                if bold_count > span_count / 2:
+                    majority_flags |= (1 << 4)
 
-            blocks_data.append({
-                "bbox": block["bbox"],
-                "text": full_text,
-                "size": avg_size,
-                "color": avg_color,
-                "flags": majority_flags,
-                "align": _detect_alignment(block["bbox"], page_width, full_text),
-            })
-            text_index_map.append((page_idx, len(blocks_data) - 1))
-            all_texts.append(full_text)
+                blocks_data.append({
+                    "bbox": block["bbox"],
+                    "text": full_text,
+                    "size": avg_size,
+                    "color": avg_color,
+                    "flags": majority_flags,
+                    "align": _detect_alignment(block["bbox"], page_width, full_text),
+                })
 
+        for bi, bd in enumerate(blocks_data):
+            text_index_map.append((page_idx, bi))
+            all_texts.append(bd["text"])
         page_blocks.append(blocks_data)
+
+        if progress_callback and page_idx % 10 == 0:
+            progress_callback(2 + int(page_idx / total_pages * 3))
 
     src_doc.close()
 
@@ -258,12 +348,17 @@ async def translate_pdf(
         if not blocks:
             continue
 
-        # Redact all text block areas
-        for bl in blocks:
-            rect = fitz.Rect(bl["bbox"]) + (-2, -2, 2, 2)
-            page.add_redact_annot(rect, fill=(1, 1, 1))
-
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        if is_image:
+            # For image PDFs: draw white rectangles over OCR'd text areas
+            for bl in blocks:
+                rect = fitz.Rect(bl["bbox"]) + (-2, -2, 2, 2)
+                page.draw_rect(rect, color=None, fill=(1, 1, 1))
+        else:
+            # For text PDFs: use redact to cleanly remove text
+            for bl in blocks:
+                rect = fitz.Rect(bl["bbox"]) + (-2, -2, 2, 2)
+                page.add_redact_annot(rect, fill=(1, 1, 1))
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
         # Insert translated text
         for bl in blocks:
