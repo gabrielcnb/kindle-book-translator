@@ -44,6 +44,79 @@ async def convert_with_calibre(
             return None
 
 
+_FONT_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
+    "C:/Windows/Fonts/georgia.ttf",
+    "C:/Windows/Fonts/times.ttf",
+]
+
+
+def _find_font() -> str | None:
+    for p in _FONT_PATHS:
+        if Path(p).exists():
+            return p
+    return None
+
+
+def _insert_text_paginated(doc, text: str, fontsize: float = 11, fontfile: str | None = None):
+    """Insert text into PDF with automatic page creation when text overflows.
+
+    insert_textbox renders nothing if text doesn't fit, so we find the
+    max chunk that fits using binary search, then continue with the rest.
+    """
+    rect = fitz.Rect(50, 50, 545, 792)  # A4 margins
+    remaining = text.strip()
+
+    def _make_kwargs():
+        kw = {"fontsize": fontsize, "align": 0}
+        if fontfile:
+            kw["fontname"] = "custom"
+            kw["fontfile"] = fontfile
+        return kw
+
+    while remaining:
+        page = doc.new_page(width=595, height=842)
+        rc = page.insert_textbox(rect, remaining, **_make_kwargs())
+        if rc >= 0:
+            break  # all text fit
+
+        # Text didn't fit — binary search for max chars that fit
+        doc.delete_page(-1)  # remove the failed page
+        lo, hi = 0, len(remaining)
+        best = 0
+
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            # Try to break at a newline or space near mid
+            cut = remaining.rfind("\n", 0, mid)
+            if cut <= lo:
+                cut = remaining.rfind(" ", 0, mid)
+            if cut <= lo:
+                cut = mid
+            if cut <= 0:
+                break
+
+            test_page = doc.new_page(width=595, height=842)
+            test_rc = test_page.insert_textbox(rect, remaining[:cut], **_make_kwargs())
+            doc.delete_page(-1)
+
+            if test_rc >= 0:
+                best = cut
+                lo = mid + 1
+            else:
+                hi = mid - 1
+
+        if best <= 0:
+            # Can't fit anything — force a chunk to avoid infinite loop
+            best = min(2000, len(remaining))
+
+        page = doc.new_page(width=595, height=842)
+        page.insert_textbox(rect, remaining[:best], **_make_kwargs())
+        remaining = remaining[best:].strip()
+
+
 async def epub_to_pdf(epub_bytes: bytes) -> bytes:
     """Convert EPUB → PDF. Uses Calibre if available, else PyMuPDF fallback."""
     if calibre_available():
@@ -51,32 +124,52 @@ async def epub_to_pdf(epub_bytes: bytes) -> bytes:
         if result:
             return result
 
-    # Fallback: extract text and build simple PDF
+    # Fallback: extract text and build PDF with proper pagination
     import zipfile
     from bs4 import BeautifulSoup
 
+    fontfile = _find_font()
     doc = fitz.open()
-    try:
-        with zipfile.ZipFile(io.BytesIO(epub_bytes)) as zf:
-            html_files = sorted(
+
+    with zipfile.ZipFile(io.BytesIO(epub_bytes)) as zf:
+        # Read OPF spine order if available
+        opf_file = next((n for n in zf.namelist() if n.endswith(".opf")), None)
+        ordered_files = []
+
+        if opf_file:
+            opf_soup = BeautifulSoup(zf.read(opf_file), "lxml-xml")
+            base_dir = opf_file.rsplit("/", 1)[0] if "/" in opf_file else ""
+            manifest = {}
+            for item in opf_soup.find_all("item"):
+                if item.get("id") and item.get("href"):
+                    href = item["href"]
+                    full = f"{base_dir}/{href}" if base_dir else href
+                    manifest[item["id"]] = full
+            for itemref in opf_soup.find_all("itemref"):
+                idref = itemref.get("idref", "")
+                if idref in manifest:
+                    ordered_files.append(manifest[idref])
+
+        if not ordered_files:
+            ordered_files = sorted(
                 n for n in zf.namelist()
                 if n.endswith((".html", ".xhtml", ".htm"))
-                and "toc" not in n.lower()
             )
-            for name in html_files:
-                soup = BeautifulSoup(zf.read(name), "lxml")
-                text = soup.get_text(separator="\n").strip()
-                if not text:
-                    continue
-                page = doc.new_page(width=595, height=842)  # A4
-                page.insert_textbox(
-                    fitz.Rect(50, 50, 545, 792),
-                    text,
-                    fontsize=11,
-                    align=0,
-                )
-    except Exception:
-        pass
+
+        for name in ordered_files:
+            try:
+                raw = zf.read(name)
+            except KeyError:
+                continue
+            soup = BeautifulSoup(raw, "lxml")
+            text = soup.get_text(separator="\n").strip()
+            if not text:
+                continue
+            _insert_text_paginated(doc, text, fontsize=11, fontfile=fontfile)
+
+    if len(doc) == 0:
+        page = doc.new_page(width=595, height=842)
+        page.insert_textbox(fitz.Rect(50, 50, 545, 792), "(No text content found)", fontsize=14)
 
     return doc.tobytes()
 
