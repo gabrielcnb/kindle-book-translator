@@ -1,12 +1,13 @@
 import asyncio
 import json
+import logging
+import os
 import tempfile
 import time
 import uuid
-from collections import defaultdict
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,13 +18,17 @@ from app.services.pdf_handler import translate_pdf
 from app.services.converter import epub_to_pdf, pdf_to_epub, calibre_available
 from app.services.cover import extract_epub_cover, extract_pdf_cover
 from app import cache
-from app.error_log import log_error, get_recent, verify_key
 
-app = FastAPI(title="Kindle Book Translator", version="2.1.0")
+logger = logging.getLogger(__name__)
 
+VERSION = "2.1.0"
+
+app = FastAPI(title="Kindle Book Translator", version=VERSION)
+
+cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -35,41 +40,45 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 MAX_SIZE = 50 * 1024 * 1024  # 50 MB
-JOB_TTL = 3600  # 1 hour
-MAX_CONCURRENT_JOBS = 3
-RATE_LIMIT_WINDOW = 60  # seconds
-RATE_LIMIT_MAX = 5  # max requests per window per IP
+MAX_JOB_AGE = 3600  # 1 hour
+CLEANUP_INTERVAL = 300  # 5 minutes
 
 jobs: dict[str, dict] = {}
 job_queues: dict[str, asyncio.Queue] = {}
-_rate_limits: dict[str, list[float]] = defaultdict(list)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job cleanup
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _cleanup_old_jobs():
+    """Remove jobs older than MAX_JOB_AGE and delete their temp files."""
     now = time.time()
-    expired = [jid for jid, j in jobs.items()
-               if j.get("status") in ("done", "error") and now - j.get("created_at", now) > JOB_TTL]
+    expired = [
+        jid for jid, j in jobs.items()
+        if now - j.get("created_at", 0) > MAX_JOB_AGE
+        and j.get("status") in ("done", "error")
+    ]
     for jid in expired:
-        job = jobs.pop(jid, {})
-        fp = job.get("file_path")
-        if fp:
+        file_path = jobs[jid].get("file_path")
+        if file_path:
             try:
-                Path(fp).unlink(missing_ok=True)
+                Path(file_path).unlink(missing_ok=True)
             except Exception:
-                pass
+                logger.warning("Failed to delete temp file: %s", file_path)
+        del jobs[jid]
         job_queues.pop(jid, None)
+    if expired:
+        logger.info("Cleaned up %d expired jobs", len(expired))
 
 
-def _check_rate_limit(client_ip: str):
-    now = time.time()
-    _rate_limits[client_ip] = [t for t in _rate_limits[client_ip] if now - t < RATE_LIMIT_WINDOW]
-    if len(_rate_limits[client_ip]) >= RATE_LIMIT_MAX:
-        raise HTTPException(429, "Too many requests. Please wait a minute.")
-    _rate_limits[client_ip].append(now)
-
-
-def _active_jobs_count() -> int:
-    return sum(1 for j in jobs.values() if j.get("status") == "running")
+@app.on_event("startup")
+async def _start_periodic_cleanup():
+    async def _loop():
+        while True:
+            await asyncio.sleep(CLEANUP_INTERVAL)
+            _cleanup_old_jobs()
+    asyncio.create_task(_loop())
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -112,16 +121,15 @@ async def _run_translation(
 
         cache.flush()
 
-        jobs[job_id] = {
+        jobs[job_id].update({
             "status": "done", "progress": 100,
             "file_path": str(out_path), "filename": out_name, "media_type": media,
-            "created_at": time.time(),
-        }
+        })
         _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
-        log_error("/translate", e, filename=filename, extra={"ext": ext, "lang": f"{source_lang}->{target_lang}"})
-        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e), "created_at": time.time()}
+        logger.error("Translation job %s failed: %s", job_id, e, exc_info=True)
+        jobs[job_id].update({"status": "error", "progress": 0, "error": str(e)})
         _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
         job_queues.pop(job_id, None)
@@ -154,16 +162,15 @@ async def _run_conversion(
         out_path = TEMP_DIR / f"{job_id}{out_ext}"
         out_path.write_bytes(result)
 
-        jobs[job_id] = {
+        jobs[job_id].update({
             "status": "done", "progress": 100,
             "file_path": str(out_path), "filename": out_name, "media_type": media,
-            "created_at": time.time(),
-        }
+        })
         _push(job_id, {"progress": 100, "status": "done", "download_url": f"/download/{job_id}"})
 
     except Exception as e:
-        log_error("/convert", e, filename=filename, extra={"src": src_ext, "out": out_ext})
-        jobs[job_id] = {"status": "error", "progress": 0, "error": str(e), "created_at": time.time()}
+        logger.error("Conversion job %s failed: %s", job_id, e, exc_info=True)
+        jobs[job_id].update({"status": "error", "progress": 0, "error": str(e)})
         _push(job_id, {"progress": 0, "status": "error", "error": str(e)})
     finally:
         job_queues.pop(job_id, None)
@@ -173,14 +180,8 @@ async def _run_conversion(
 # Routes
 # ──────────────────────────────────────────────────────────────────────────────
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "active_jobs": _active_jobs_count(), "version": "2.1.0"}
-
-
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    _cleanup_old_jobs()
     return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
@@ -194,7 +195,7 @@ async def info():
     return {
         "calibre_available": calibre_available(),
         "cache_stats": cache.stats(),
-        "version": "2.1.0",
+        "version": VERSION,
     }
 
 
@@ -223,20 +224,12 @@ async def get_cover(file: UploadFile = File(...)):
 
 @app.post("/translate")
 async def start_translation(
-    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     source_lang: str = Form("auto"),
     target_lang: str = Form("pt"),
     bilingual: str = Form("false"),
 ):
-    client_ip = request.client.host if request.client else "unknown"
-    _check_rate_limit(client_ip)
-    _cleanup_old_jobs()
-
-    if _active_jobs_count() >= MAX_CONCURRENT_JOBS:
-        raise HTTPException(503, "Server busy. Please try again in a few minutes.")
-
     content = await file.read()
     if len(content) > MAX_SIZE:
         raise HTTPException(400, "File too large. Maximum size is 50 MB.")
@@ -245,6 +238,14 @@ async def start_translation(
     ext = Path(filename).suffix.lower()
     if ext not in (".epub", ".pdf"):
         raise HTTPException(400, "Only EPUB and PDF files are supported.")
+
+    if target_lang not in LANGUAGES:
+        raise HTTPException(400, f"Unsupported target language: {target_lang}")
+
+    if source_lang != "auto" and source_lang not in LANGUAGES:
+        raise HTTPException(400, f"Unsupported source language: {source_lang}")
+
+    _cleanup_old_jobs()
 
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "running", "progress": 0, "created_at": time.time()}
@@ -260,19 +261,11 @@ async def start_translation(
 
 @app.post("/convert")
 async def start_conversion(
-    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     output_format: str = Form(...),
 ):
-    """Convert EPUB<->PDF without translating."""
-    client_ip = request.client.host if request.client else "unknown"
-    _check_rate_limit(client_ip)
-    _cleanup_old_jobs()
-
-    if _active_jobs_count() >= MAX_CONCURRENT_JOBS:
-        raise HTTPException(503, "Server busy. Please try again in a few minutes.")
-
+    """Convert EPUB↔PDF without translating."""
     content = await file.read()
     if len(content) > MAX_SIZE:
         raise HTTPException(400, "File too large.")
@@ -285,6 +278,8 @@ async def start_conversion(
         raise HTTPException(400, "Source and output format are the same.")
     if src_ext not in (".epub", ".pdf") or out_ext not in (".epub", ".pdf"):
         raise HTTPException(400, "Only EPUB and PDF are supported.")
+
+    _cleanup_old_jobs()
 
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "running", "progress": 0, "created_at": time.time()}
@@ -319,7 +314,7 @@ async def progress_stream(job_id: str):
 
         while True:
             try:
-                event = await asyncio.wait_for(q.get(), timeout=20)
+                event = await asyncio.wait_for(q.get(), timeout=60)
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("status") in ("done", "error"):
                     break
@@ -331,6 +326,20 @@ async def progress_stream(job_id: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/status/{job_id}")
+async def job_status(job_id: str):
+    """Polling fallback for when SSE disconnects (e.g. mobile app switch)."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    result = {"progress": job.get("progress", 0), "status": job.get("status", "running")}
+    if job.get("status") == "done":
+        result["download_url"] = f"/download/{job_id}"
+    if job.get("status") == "error":
+        result["error"] = job.get("error", "")
+    return result
 
 
 @app.get("/download/{job_id}")
@@ -345,11 +354,3 @@ async def download_result(job_id: str):
         filename=job["filename"],
         media_type=job["media_type"],
     )
-
-
-@app.get("/logs")
-async def get_logs(request: Request, n: int = 20):
-    key = request.headers.get("X-Log-Key", "")
-    if not verify_key(key):
-        raise HTTPException(403, "Forbidden")
-    return {"errors": get_recent(min(n, 100))}
