@@ -6,18 +6,32 @@
   <title>Kindle Book Translator</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Theme variables ────────────────────────────────────────────────── */
     :root {
       --bg: #0f0f13; --card: #1a1a24; --border: #2e2e42;
       --accent: #6c63ff; --accent2: #ff6584; --text: #e8e8f0; --muted: #8888a8;
       --success: #4ade80; --warn: #fbbf24; --radius: 12px;
+      --input-bg: #0f0f13;
     }
-    body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:2rem 1rem; }
+    [data-theme="light"] {
+      --bg: #f5f5f7; --card: #ffffff; --border: #d4d4d8;
+      --accent: #6c63ff; --accent2: #ff6584; --text: #1a1a2e; --muted: #6b7280;
+      --success: #16a34a; --warn: #d97706;
+      --input-bg: #f0f0f4;
+    }
 
-    header { text-align:center; margin-bottom:2rem; }
+    body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:2rem 1rem; transition: background .3s, color .3s; }
+
+    header { text-align:center; margin-bottom:2rem; position: relative; width: 100%; max-width: 660px; }
     header h1 { font-size:2.1rem; font-weight:700; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
     header p { color:var(--muted); margin-top:.4rem; }
 
-    .card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:1.75rem; width:100%; max-width:660px; }
+    /* Theme toggle */
+    .theme-toggle { position:absolute; top:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:.35rem .6rem; cursor:pointer; font-size:1.1rem; line-height:1; transition: background .2s; }
+    .theme-toggle:hover { background:var(--border); }
+
+    .card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:1.75rem; width:100%; max-width:660px; transition: background .3s, border-color .3s; }
 
     /* Tabs */
     .tabs { display:flex; gap:4px; background:var(--bg); border-radius:8px; padding:4px; margin-bottom:1.5rem; }
@@ -47,8 +61,10 @@
     .row { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:1.1rem; }
     .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; margin-top:1.1rem; }
     .field label { display:block; font-size:.78rem; color:var(--muted); margin-bottom:.35rem; text-transform:uppercase; letter-spacing:.05em; }
-    select { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:.5rem .7rem; font-size:.9rem; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238888a8' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right .7rem center; cursor:pointer; }
-    select:focus { outline:none; border-color:var(--accent); }
+    select, textarea { width:100%; background:var(--input-bg); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:.5rem .7rem; font-size:.9rem; font-family:inherit; }
+    select { appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238888a8' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right .7rem center; cursor:pointer; }
+    select:focus, textarea:focus { outline:none; border-color:var(--accent); }
+    textarea { resize:vertical; min-height:3.5rem; font-size:.82rem; }
 
     /* Toggle */
     .toggle-row { display:flex; align-items:center; gap:.6rem; margin-top:1.1rem; }
@@ -66,13 +82,15 @@
     .btn:disabled { opacity:.4; cursor:not-allowed; transform:none; }
     .btn-secondary { background:var(--card); border:1px solid var(--border); color:var(--text); }
     .btn-secondary:hover:not(:disabled) { background:var(--border); }
+    .btn-cancel { background:transparent; border:1px solid var(--accent2); color:var(--accent2); margin-top:.5rem; font-size:.82rem; padding:.5rem; }
+    .btn-cancel:hover { background:rgba(255,101,132,.1); }
 
     /* Progress */
     .progress-wrap { display:none; margin-top:1.1rem; }
     .progress-wrap.visible { display:block; }
     .progress-label { display:flex; justify-content:space-between; font-size:.82rem; color:var(--muted); margin-bottom:.35rem; }
     .progress-bg { background:var(--border); border-radius:99px; height:8px; overflow:hidden; }
-    .progress-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:99px; transition:width .4s ease; width:0%; }
+    .progress-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:99px; transition:width .8s ease; width:0%; }
 
     .status { margin-top:.85rem; font-size:.88rem; text-align:center; min-height:1.2em; }
     .status.error { color:var(--accent2); }
@@ -84,9 +102,17 @@
     .badge.green { background:rgba(74,222,128,.12); color:var(--success); border:1px solid rgba(74,222,128,.25); }
     .badge.yellow { background:rgba(251,191,36,.1); color:var(--warn); border:1px solid rgba(251,191,36,.25); }
 
+    /* Collapsible */
+    .collapsible-header { display:flex; align-items:center; gap:.5rem; cursor:pointer; font-size:.82rem; color:var(--muted); margin-top:1rem; user-select:none; }
+    .collapsible-header:hover { color:var(--text); }
+    .collapsible-arrow { transition:transform .2s; font-size:.7rem; }
+    .collapsible-header.open .collapsible-arrow { transform:rotate(90deg); }
+    .collapsible-content { display:none; margin-top:.5rem; }
+    .collapsible-content.open { display:block; }
+
     /* Features */
     .features { display:grid; grid-template-columns:repeat(3,1fr); gap:.65rem; margin-top:1.5rem; width:100%; max-width:660px; }
-    .feature { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:.85rem; text-align:center; font-size:.82rem; }
+    .feature { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:.85rem; text-align:center; font-size:.82rem; transition: background .3s; }
     .feature .icon { font-size:1.35rem; margin-bottom:.3rem; }
     .feature .title { font-weight:600; margin-bottom:.15rem; }
     .feature .desc { color:var(--muted); font-size:.75rem; }
@@ -99,45 +125,53 @@
 <body>
 
 <header>
-  <h1>📚 Kindle Book Translator</h1>
-  <p>Translate &amp; convert EPUB / PDF — covers preserved, Kindle-ready</p>
+  <h1>Kindle Book Translator</h1>
+  <p>Translate &amp; convert EPUB / PDF / MOBI — covers preserved, Kindle-ready</p>
+  <button class="theme-toggle" id="themeToggle" title="Toggle theme">&#9790;</button>
 </header>
 
 <div class="card">
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('translate', this)">🌍 Translate</button>
-    <button class="tab" onclick="switchTab('convert', this)">🔄 Convert Format</button>
+    <button class="tab active" onclick="switchTab('translate', this)">Translate</button>
+    <button class="tab" onclick="switchTab('convert', this)">Convert Format</button>
   </div>
 
   <!-- Drop zone (shared) -->
   <div class="drop-zone" id="dropZone">
-    <input type="file" id="fileInput" accept=".epub,.pdf" />
-    <div class="drop-icon">📖</div>
+    <input type="file" id="fileInput" accept=".epub,.pdf,.mobi,.azw3" />
+    <div class="drop-icon">&#128214;</div>
     <div class="drop-label"><strong>Click to upload</strong> or drag &amp; drop</div>
-    <div class="drop-formats">EPUB · PDF — max 50 MB</div>
+    <div class="drop-formats">EPUB &middot; PDF &middot; MOBI &middot; AZW3 — max 50 MB</div>
   </div>
 
   <div class="file-row" id="fileRow">
     <img id="coverImg" class="cover-thumb" style="display:none" alt="cover" />
-    <div class="cover-placeholder" id="coverPlaceholder">📄</div>
+    <div class="cover-placeholder" id="coverPlaceholder">&#128196;</div>
     <div class="file-meta">
       <div class="file-name" id="fileName"></div>
       <div class="file-size" id="fileSize"></div>
     </div>
-    <button class="remove-btn" id="removeFile" title="Remove">✕</button>
+    <button class="remove-btn" id="removeFile" title="Remove" aria-label="Remove file">&#10005;</button>
   </div>
 
   <!-- TRANSLATE panel -->
   <div id="panel-translate">
-    <div class="row">
+    <div class="row-3">
       <div class="field">
-        <label>Source Language</label>
+        <label for="sourceLang">Source Language</label>
         <select id="sourceLang"><option value="auto">Auto Detect</option></select>
       </div>
       <div class="field">
-        <label>Target Language</label>
+        <label for="targetLang">Target Language</label>
         <select id="targetLang"><option value="pt">Portuguese</option></select>
+      </div>
+      <div class="field">
+        <label for="engineSelect">Translation Engine</label>
+        <select id="engineSelect">
+          <option value="google">Google Translate</option>
+          <option value="mymemory">MyMemory</option>
+        </select>
       </div>
     </div>
 
@@ -151,6 +185,18 @@
       </span>
     </div>
 
+    <!-- Glossary (collapsible) -->
+    <div class="collapsible-header" id="glossaryToggle" onclick="toggleCollapsible(this)">
+      <span class="collapsible-arrow">&#9654;</span>
+      <span>Protected terms (glossary)</span>
+    </div>
+    <div class="collapsible-content" id="glossaryContent">
+      <textarea id="glossaryInput" placeholder="One term per line, e.g.:&#10;Harry Potter&#10;Hogwarts&#10;Dumbledore"></textarea>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:.2rem">These terms will not be translated.</div>
+    </div>
+
+    <div class="status warn" id="langWarning" style="display:none">Source and target languages are the same.</div>
+
     <button class="btn" id="translateBtn" disabled>Translate Book</button>
   </div>
 
@@ -158,44 +204,99 @@
   <div id="panel-convert" style="display:none">
     <div class="row" style="grid-template-columns:1fr">
       <div class="field">
-        <label>Output Format</label>
+        <label for="outputFormat">Output Format</label>
         <select id="outputFormat">
           <option value="pdf">PDF</option>
           <option value="epub">EPUB</option>
         </select>
       </div>
     </div>
-    <div id="calibreInfo" style="margin-top:.75rem;font-size:.82rem;color:var(--muted)">Checking Calibre…</div>
+    <div id="calibreInfo" style="margin-top:.75rem;font-size:.82rem;color:var(--muted)">Checking Calibre...</div>
     <button class="btn btn-secondary" id="convertBtn" style="margin-top:1rem" disabled>Convert</button>
   </div>
 
   <!-- Progress (shared) -->
   <div class="progress-wrap" id="progressWrap">
     <div class="progress-label">
-      <span id="progressText">Processing…</span>
+      <span id="progressText">Processing...</span>
       <span id="progressPct">0%</span>
     </div>
-    <div class="progress-bg"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-bg"><div class="progress-fill" id="progressFill" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div></div>
+    <div id="etaText" style="font-size:.75rem;color:var(--muted);text-align:right;margin-top:.2rem"></div>
+    <button class="btn btn-cancel" id="cancelBtn" style="display:none" onclick="cancelJob()">Cancel</button>
   </div>
 
   <div class="status" id="status"></div>
 </div>
 
 <div class="features">
-  <div class="feature"><div class="icon">🎨</div><div class="title">Cover Preserved</div><div class="desc">Original book cover in every output</div></div>
-  <div class="feature"><div class="icon">📱</div><div class="title">Kindle Ready</div><div class="desc">EPUB output works on all e-readers</div></div>
-  <div class="feature"><div class="icon">🔄</div><div class="title">Format Convert</div><div class="desc">EPUB↔PDF without translating</div></div>
-  <div class="feature"><div class="icon">🌍</div><div class="title">100+ Languages</div><div class="desc">Google Translate, no API key needed</div></div>
-  <div class="feature"><div class="icon">⚡</div><div class="title">Smart Cache</div><div class="desc">Re-uploads skip already-translated text</div></div>
-  <div class="feature"><div class="icon">📖</div><div class="title">Bilingual Mode</div><div class="desc">Original + translation side by side</div></div>
+  <div class="feature"><div class="icon">&#127912;</div><div class="title">Cover Preserved</div><div class="desc">Original book cover in every output</div></div>
+  <div class="feature"><div class="icon">&#128241;</div><div class="title">Kindle Ready</div><div class="desc">EPUB output works on all e-readers</div></div>
+  <div class="feature"><div class="icon">&#128260;</div><div class="title">Format Convert</div><div class="desc">EPUB, PDF, MOBI, AZW3</div></div>
+  <div class="feature"><div class="icon">&#127758;</div><div class="title">100+ Languages</div><div class="desc">Google Translate + MyMemory</div></div>
+  <div class="feature"><div class="icon">&#9889;</div><div class="title">Smart Cache</div><div class="desc">Re-uploads skip already-translated text</div></div>
+  <div class="feature"><div class="icon">&#128214;</div><div class="title">Glossary</div><div class="desc">Protect names &amp; terms from translation</div></div>
 </div>
 
-<footer>Open source · Free · <a href="https://github.com/gabrielcnb/kindle-book-translator" style="color:var(--accent)">GitHub</a></footer>
+<footer>Open source &middot; Free &middot; <a href="https://github.com/gabrielcnb/kindle-book-translator" style="color:var(--accent)">GitHub</a></footer>
 
 <script>
   // ── State ────────────────────────────────────────────────────────────────
   let selectedFile = null;
   let activeTab = 'translate';
+  let currentJobId = null;
+  let coverBlobUrl = null;
+  let etaStartTime = 0;
+  let etaStartPct = 0;
+  const SUPPORTED_EXT = ['epub', 'pdf', 'mobi', 'azw3'];
+
+  // ── Theme ───────────────────────────────────────────────────────────────
+  function initTheme() {
+    const saved = localStorage.getItem('kbt_theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+    updateThemeIcon(saved);
+  }
+
+  function updateThemeIcon(theme) {
+    document.getElementById('themeToggle').textContent = theme === 'dark' ? '\u263E' : '\u2600';
+  }
+
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('kbt_theme', next);
+    updateThemeIcon(next);
+  });
+
+  initTheme();
+
+  // ── Preferences ─────────────────────────────────────────────────────────
+  function savePrefs() {
+    const prefs = {
+      sourceLang: document.getElementById('sourceLang').value,
+      targetLang: document.getElementById('targetLang').value,
+      engine: document.getElementById('engineSelect').value,
+      bilingual: document.getElementById('bilingualToggle').checked,
+    };
+    localStorage.setItem('kbt_prefs', JSON.stringify(prefs));
+  }
+
+  function loadPrefs() {
+    try {
+      const prefs = JSON.parse(localStorage.getItem('kbt_prefs'));
+      if (!prefs) return;
+      if (prefs.sourceLang) document.getElementById('sourceLang').value = prefs.sourceLang;
+      if (prefs.targetLang) document.getElementById('targetLang').value = prefs.targetLang;
+      if (prefs.engine) document.getElementById('engineSelect').value = prefs.engine;
+      if (prefs.bilingual) document.getElementById('bilingualToggle').checked = prefs.bilingual;
+    } catch {}
+  }
+
+  // Save prefs on change
+  ['sourceLang', 'targetLang', 'engineSelect', 'bilingualToggle'].forEach(id => {
+    document.getElementById(id).addEventListener('change', savePrefs);
+  });
 
   // ── Init ─────────────────────────────────────────────────────────────────
   fetch('/languages').then(r => r.json()).then(({ languages }) => {
@@ -207,16 +308,31 @@
       if (code === 'pt') o.selected = true;
       tgt.appendChild(o);
     });
+    loadPrefs();
+    checkLangMatch();
   });
 
   fetch('/info').then(r => r.json()).then(info => {
     const el = document.getElementById('calibreInfo');
     if (info.calibre_available) {
-      el.innerHTML = '<span class="badge green">✓ Calibre installed — high-quality conversion</span>';
+      el.innerHTML = '<span class="badge green">Calibre installed — high-quality conversion</span>';
     } else {
-      el.innerHTML = '<span class="badge yellow">⚠ Calibre not found — using fallback converter. <a href="https://calibre-ebook.com/download" target="_blank" style="color:var(--accent)">Install Calibre</a> for best results.</span>';
+      el.innerHTML = '<span class="badge yellow">Calibre not found — using fallback converter. <a href="https://calibre-ebook.com/download" target="_blank" style="color:var(--accent)">Install Calibre</a> for best results.</span>';
     }
   }).catch(() => {});
+
+  // ── Language match warning ──────────────────────────────────────────────
+  function checkLangMatch() {
+    const src = document.getElementById('sourceLang').value;
+    const tgt = document.getElementById('targetLang').value;
+    const warn = document.getElementById('langWarning');
+    const show = src !== 'auto' && src === tgt;
+    warn.style.display = show ? '' : 'none';
+    document.getElementById('translateBtn').disabled = !selectedFile || show;
+  }
+
+  document.getElementById('sourceLang').addEventListener('change', checkLangMatch);
+  document.getElementById('targetLang').addEventListener('change', checkLangMatch);
 
   // ── Tabs ─────────────────────────────────────────────────────────────────
   function switchTab(tab, btn) {
@@ -230,11 +346,23 @@
 
   function updateButtons() {
     const has = !!selectedFile;
-    document.getElementById('translateBtn').disabled = !has;
+    const langOk = (() => {
+      const src = document.getElementById('sourceLang').value;
+      const tgt = document.getElementById('targetLang').value;
+      return src === 'auto' || src !== tgt;
+    })();
+    document.getElementById('translateBtn').disabled = !has || !langOk;
     document.getElementById('convertBtn').disabled = !has;
   }
 
-  // ── File handling ─────────────────────────────────────────────────────────
+  // ── Collapsible ─────────────────────────────────────────────────────────
+  function toggleCollapsible(header) {
+    header.classList.toggle('open');
+    const content = header.nextElementSibling;
+    content.classList.toggle('open');
+  }
+
+  // ── File handling ───────────────────────────────────────────────────────
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
 
@@ -249,7 +377,7 @@
 
   function setFile(file) {
     const ext = file.name.split('.').pop().toLowerCase();
-    if (!['epub', 'pdf'].includes(ext)) { showStatus('Only EPUB and PDF supported.', 'error'); return; }
+    if (!SUPPORTED_EXT.includes(ext)) { showStatus('Supported formats: EPUB, PDF, MOBI, AZW3.', 'error'); return; }
     if (file.size > 50 * 1024 * 1024) { showStatus('File too large (max 50 MB).', 'error'); return; }
 
     selectedFile = file;
@@ -262,7 +390,7 @@
 
     // Auto-set output format opposite to input
     const outSel = document.getElementById('outputFormat');
-    outSel.value = ext === 'epub' ? 'pdf' : 'epub';
+    outSel.value = ext === 'pdf' ? 'epub' : 'pdf';
   }
 
   function clearFile() {
@@ -274,8 +402,6 @@
     if (coverBlobUrl) { URL.revokeObjectURL(coverBlobUrl); coverBlobUrl = null; }
     updateButtons();
   }
-
-  let coverBlobUrl = null;
 
   async function loadCover(file) {
     try {
@@ -293,19 +419,22 @@
     } catch { /* no cover, that's fine */ }
   }
 
-  // ── Translate ─────────────────────────────────────────────────────────────
+  // ── Translate ───────────────────────────────────────────────────────────
   document.getElementById('translateBtn').addEventListener('click', async () => {
     if (!selectedFile) return;
+    savePrefs();
     const fd = new FormData();
     fd.append('file', selectedFile);
     fd.append('source_lang', document.getElementById('sourceLang').value);
     fd.append('target_lang', document.getElementById('targetLang').value);
     fd.append('bilingual', document.getElementById('bilingualToggle').checked ? 'true' : 'false');
+    fd.append('engine', document.getElementById('engineSelect').value);
+    fd.append('glossary', document.getElementById('glossaryInput').value);
 
     await runJob('/translate', fd, 'Translating');
   });
 
-  // ── Convert ───────────────────────────────────────────────────────────────
+  // ── Convert ─────────────────────────────────────────────────────────────
   document.getElementById('convertBtn').addEventListener('click', async () => {
     if (!selectedFile) return;
     const fd = new FormData();
@@ -315,11 +444,23 @@
     await runJob('/convert', fd, 'Converting');
   });
 
-  // ── Shared job runner ─────────────────────────────────────────────────────
+  // ── Cancel ──────────────────────────────────────────────────────────────
+  async function cancelJob() {
+    if (!currentJobId) return;
+    try {
+      await fetch('/cancel/' + currentJobId, { method: 'POST' });
+    } catch {}
+  }
+
+  // ── Shared job runner ───────────────────────────────────────────────────
   async function runJob(endpoint, formData, label) {
     setRunning(true);
-    resetProgress(label + '…');
+    resetProgress(label + '...');
     showStatus('');
+    document.getElementById('cancelBtn').style.display = '';
+    document.getElementById('etaText').textContent = '';
+    etaStartTime = 0;
+    etaStartPct = 0;
 
     try {
       const res = await fetch(endpoint, { method: 'POST', body: formData });
@@ -328,16 +469,20 @@
         throw new Error(err.detail || 'Failed');
       }
       const { job_id } = await res.json();
+      currentJobId = job_id;
 
       const downloadUrl = await listenSSE(job_id, label);
       await downloadFile(downloadUrl);
-      showStatus('✅ Done! Download started.', 'success');
+      showStatus('Done! Download started.', 'success');
 
     } catch (err) {
-      showStatus('❌ ' + err.message, 'error');
+      showStatus(err.message, 'error');
       document.getElementById('progressText').textContent = 'Error';
     } finally {
       setRunning(false);
+      currentJobId = null;
+      document.getElementById('cancelBtn').style.display = 'none';
+      document.getElementById('etaText').textContent = '';
     }
   }
 
@@ -351,7 +496,8 @@
         if (d.heartbeat) return;
         if (d.status === 'running') {
           setProgress(d.progress);
-          document.getElementById('progressText').textContent = `${label}… ${d.progress}%`;
+          document.getElementById('progressText').textContent = label + '... ' + d.progress + '%';
+          updateETA(d.progress);
         } else if (d.status === 'done') {
           finish();
           setProgress(100);
@@ -369,15 +515,15 @@
         if (es) es.close();
       }
 
-      // Polling fallback — checks every 2s when SSE drops
+      // Polling fallback
       function startPolling() {
         if (pollTimer || done) return;
         pollTimer = setInterval(async () => {
           try {
-            const res = await fetch(`/status/${job_id}`);
+            const res = await fetch('/status/' + job_id);
             if (!res.ok) return;
             handleEvent(await res.json());
-          } catch { /* retry next interval */ }
+          } catch {}
         }, 2000);
       }
 
@@ -385,14 +531,13 @@
       let es = null;
       function connectSSE() {
         if (done) return;
-        es = new EventSource(`/progress/${job_id}`);
+        es = new EventSource('/progress/' + job_id);
         es.onmessage = e => {
           try { handleEvent(JSON.parse(e.data)); } catch {}
         };
         es.onerror = () => {
           es.close();
           if (done) return;
-          // On disconnect: start polling and try SSE again after 3s
           startPolling();
           setTimeout(connectSSE, 3000);
         };
@@ -400,6 +545,29 @@
 
       connectSSE();
     });
+  }
+
+  // ── ETA calculation ─────────────────────────────────────────────────────
+  function updateETA(pct) {
+    if (pct < 5) return; // Wait for meaningful progress
+    const now = Date.now();
+    if (etaStartTime === 0) {
+      etaStartTime = now;
+      etaStartPct = pct;
+      return;
+    }
+    const elapsed = (now - etaStartTime) / 1000; // seconds
+    const pctDone = pct - etaStartPct;
+    if (pctDone <= 0) return;
+    const pctRemaining = 100 - pct;
+    const secsRemaining = (elapsed / pctDone) * pctRemaining;
+
+    const el = document.getElementById('etaText');
+    if (secsRemaining < 60) {
+      el.textContent = '~' + Math.ceil(secsRemaining) + 's remaining';
+    } else {
+      el.textContent = '~' + Math.ceil(secsRemaining / 60) + 'min remaining';
+    }
   }
 
   async function downloadFile(url) {
@@ -419,7 +587,7 @@
     URL.revokeObjectURL(blobUrl);
   }
 
-  // ── UI helpers ────────────────────────────────────────────────────────────
+  // ── UI helpers ──────────────────────────────────────────────────────────
   function setRunning(on) {
     document.getElementById('translateBtn').disabled = on;
     document.getElementById('convertBtn').disabled = on;
@@ -432,14 +600,16 @@
   }
 
   function setProgress(val) {
-    document.getElementById('progressFill').style.width = val + '%';
+    const fill = document.getElementById('progressFill');
+    fill.style.width = val + '%';
+    fill.setAttribute('aria-valuenow', val);
     document.getElementById('progressPct').textContent = Math.round(val) + '%';
   }
 
-  function showStatus(msg, type = '') {
+  function showStatus(msg, type) {
     const el = document.getElementById('status');
     el.textContent = msg;
-    el.className = 'status ' + type;
+    el.className = 'status ' + (type || '');
   }
 
   function fmtSize(b) {

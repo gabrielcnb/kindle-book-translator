@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Callable
 
-from deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator, MyMemoryTranslator
 from app import cache
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,11 @@ LANGUAGES = {
     "zu": "Zulu",
 }
 
+ENGINES = {
+    "google": {"name": "Google Translate", "class": GoogleTranslator},
+    "mymemory": {"name": "MyMemory", "class": MyMemoryTranslator},
+}
+
 MAX_CHUNK = 4500
 DELAY_BETWEEN_REQUESTS = 0.05
 TRANSLATE_TIMEOUT = 30
@@ -49,6 +54,38 @@ MAX_CONCURRENT = 5  # parallel translation requests
 BATCH_SEP = "\n|||KBTXSEP|||\n"
 BATCH_SEP_RE = re.compile(re.escape(BATCH_SEP))
 BATCH_SIZE = 12
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Glossary: protect terms from translation using placeholders
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _protect_glossary(text: str, glossary: list[str]) -> tuple[str, list[tuple[str, str]]]:
+    """Replace glossary terms with numbered placeholders."""
+    replacements = []
+    for i, term in enumerate(glossary):
+        placeholder = f"⟦KBT{i:03d}⟧"
+        if term in text:
+            text = text.replace(term, placeholder)
+            replacements.append((placeholder, term))
+    return text, replacements
+
+
+def _restore_glossary(text: str, replacements: list[tuple[str, str]]) -> str:
+    """Restore glossary terms from placeholders."""
+    for placeholder, term in replacements:
+        text = text.replace(placeholder, term)
+    return text
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Translation engine
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _create_translator(engine: str, source_lang: str, target_lang: str):
+    """Create a translator instance for the given engine."""
+    cls = ENGINES[engine]["class"]
+    return cls(source=source_lang, target=target_lang)
 
 
 def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
@@ -87,8 +124,8 @@ def split_text(text: str, max_size: int = MAX_CHUNK) -> list[str]:
     return chunks or [text[:max_size]]
 
 
-async def _translate_chunk(translator: GoogleTranslator, chunk: str) -> str:
-    """Translate a single chunk with timeout and retry."""
+async def _translate_chunk(translator, chunk: str, engine: str) -> str:
+    """Translate a single chunk with timeout, retry, and engine fallback."""
     last_exc: BaseException | None = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -102,7 +139,22 @@ async def _translate_chunk(translator: GoogleTranslator, chunk: str) -> str:
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(2 ** attempt)
 
-    logger.warning("Chunk failed after %d attempts: %s", MAX_RETRIES, last_exc)
+    # Fallback: try alternative engine if primary fails
+    fallback_engine = "mymemory" if engine == "google" else "google"
+    try:
+        fb_translator = _create_translator(
+            fallback_engine, translator.source, translator.target
+        )
+        result = await asyncio.wait_for(
+            asyncio.to_thread(fb_translator.translate, chunk),
+            timeout=TRANSLATE_TIMEOUT,
+        )
+        logger.info("Fallback to %s succeeded", fallback_engine)
+        return result or chunk
+    except Exception:
+        pass
+
+    logger.warning("Chunk failed after %d attempts + fallback: %s", MAX_RETRIES, last_exc)
     return chunk
 
 
@@ -110,10 +162,11 @@ _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
 
 async def _translate_chunk_cached(
-    translator: GoogleTranslator,
+    translator,
     source_lang: str,
     target_lang: str,
     chunk: str,
+    engine: str = "google",
 ) -> str:
     """Translate a single chunk with cache lookup and concurrency limit."""
     if not chunk.strip():
@@ -124,25 +177,42 @@ async def _translate_chunk_cached(
         return cached
 
     async with _semaphore:
-        result = await _translate_chunk(translator, chunk)
+        result = await _translate_chunk(translator, chunk, engine)
         await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
 
     cache.set(source_lang, target_lang, chunk, result)
     return result
 
 
-async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
+async def translate_text(
+    text: str,
+    source_lang: str,
+    target_lang: str,
+    engine: str = "google",
+    glossary: list[str] | None = None,
+) -> str:
     if not text or not text.strip():
         return text
 
+    # Protect glossary terms
+    replacements = []
+    if glossary:
+        text, replacements = _protect_glossary(text, glossary)
+
     chunks = split_text(text)
-    translator = GoogleTranslator(source=source_lang, target=target_lang)
+    translator = _create_translator(engine, source_lang, target_lang)
 
     translated_chunks = await asyncio.gather(
-        *(_translate_chunk_cached(translator, source_lang, target_lang, c) for c in chunks)
+        *(_translate_chunk_cached(translator, source_lang, target_lang, c, engine) for c in chunks)
     )
 
-    return "\n".join(translated_chunks)
+    result = "\n".join(translated_chunks)
+
+    # Restore glossary terms
+    if replacements:
+        result = _restore_glossary(result, replacements)
+
+    return result
 
 
 async def batch_translate(
@@ -151,6 +221,8 @@ async def batch_translate(
     target_lang: str,
     batch_size: int = BATCH_SIZE,
     on_batch_done: Callable[[int], None] | None = None,
+    engine: str = "google",
+    glossary: list[str] | None = None,
 ) -> list[str]:
     """Translate a list of texts in batches, preserving order.
     Falls back to individual translation if separator is mangled.
@@ -170,7 +242,9 @@ async def batch_translate(
         indices, nonempty_texts = zip(*nonempty)
 
         joined = BATCH_SEP.join(nonempty_texts)
-        translated_joined = await translate_text(joined, source_lang, target_lang)
+        translated_joined = await translate_text(
+            joined, source_lang, target_lang, engine=engine, glossary=glossary,
+        )
 
         parts = [p.strip() for p in BATCH_SEP_RE.split(translated_joined)]
 
@@ -180,7 +254,8 @@ async def batch_translate(
         else:
             for local_i, global_i in enumerate(indices):
                 results[batch_start + global_i] = await translate_text(
-                    nonempty_texts[local_i], source_lang, target_lang
+                    nonempty_texts[local_i], source_lang, target_lang,
+                    engine=engine, glossary=glossary,
                 )
 
         completed += len(batch)
