@@ -54,6 +54,16 @@ async def convert_with_calibre(
             return None
 
 
+async def convert_to_epub(file_bytes: bytes, src_ext: str) -> bytes:
+    """Convert MOBI/AZW3 to EPUB using Calibre."""
+    if not calibre_available():
+        raise RuntimeError("Calibre is required to convert MOBI/AZW3 files. Please install Calibre.")
+    result = await convert_with_calibre(file_bytes, src_ext, ".epub")
+    if not result:
+        raise RuntimeError(f"Failed to convert {src_ext} to EPUB.")
+    return result
+
+
 async def epub_to_pdf(epub_bytes: bytes) -> bytes:
     """Convert EPUB → PDF. Uses Calibre if available, else PyMuPDF fallback."""
     if calibre_available():

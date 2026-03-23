@@ -15,6 +15,8 @@ async def translate_pdf(
     source_lang: str,
     target_lang: str,
     progress_callback: Callable[[int], None] | None = None,
+    engine: str = "google",
+    glossary: list[str] | None = None,
 ) -> bytes:
     src_doc = fitz.open(stream=file_bytes, filetype="pdf")
     out_doc = fitz.open()
@@ -66,7 +68,7 @@ async def translate_pdf(
 
             translations = await batch_translate(
                 texts, source_lang, target_lang, batch_size=BATCH_SIZE,
-                on_batch_done=_on_batch_done,
+                on_batch_done=_on_batch_done, engine=engine, glossary=glossary,
             )
 
             for (bbox, fontsize, color, _), translated in zip(span_data, translations):

@@ -67,6 +67,8 @@ async def translate_epub(
     target_lang: str,
     progress_callback: Callable[[int], None] | None = None,
     bilingual: bool = False,
+    engine: str = "google",
+    glossary: list[str] | None = None,
 ) -> bytes:
     book = epub.read_epub(io.BytesIO(file_bytes))
     items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
@@ -110,7 +112,8 @@ async def translate_epub(
 
         # Batch-translate all blocks for this document
         translations = await batch_translate(
-            texts, source_lang, target_lang, on_batch_done=_on_batch_done
+            texts, source_lang, target_lang, on_batch_done=_on_batch_done,
+            engine=engine, glossary=glossary,
         )
         blocks_done += len(blocks)
 
