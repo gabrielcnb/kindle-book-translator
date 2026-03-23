@@ -5,12 +5,14 @@ Falls back to PyMuPDF / ebooklib if Calibre is not installed.
 
 import asyncio
 import io
-import os
+import logging
 import shutil
 import tempfile
 from pathlib import Path
 
 import fitz  # PyMuPDF
+
+logger = logging.getLogger(__name__)
 
 
 def calibre_available() -> bool:
@@ -29,12 +31,7 @@ async def convert_with_calibre(
         dst = Path(tmp) / f"output{output_ext}"
         src.write_bytes(input_bytes)
 
-        # Use xvfb-run on headless Linux (Calibre needs a display)
-        base_cmd = ["ebook-convert", str(src), str(dst)] + (extra_args or [])
-        if shutil.which("xvfb-run"):
-            cmd = ["xvfb-run", "--auto-servernum"] + base_cmd
-        else:
-            cmd = base_cmd
+        cmd = ["ebook-convert", str(src), str(dst)] + (extra_args or [])
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -43,83 +40,18 @@ async def convert_with_calibre(
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
             if proc.returncode != 0:
+                logger.warning("Calibre conversion failed (exit %d): %s", proc.returncode, stderr.decode(errors="replace")[:500])
                 return None
             return dst.read_bytes() if dst.exists() else None
-        except (asyncio.TimeoutError, FileNotFoundError, Exception):
+        except asyncio.TimeoutError:
+            logger.warning("Calibre conversion timed out after 300s")
             return None
-
-
-_FONT_PATHS = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
-    "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
-    "C:/Windows/Fonts/georgia.ttf",
-    "C:/Windows/Fonts/times.ttf",
-]
-
-
-def _find_font() -> str | None:
-    for p in _FONT_PATHS:
-        if Path(p).exists():
-            return p
-    return None
-
-
-def _insert_text_paginated(doc, text: str, fontsize: float = 11, fontfile: str | None = None):
-    """Insert text into PDF with automatic page creation when text overflows.
-
-    insert_textbox renders nothing if text doesn't fit, so we find the
-    max chunk that fits using binary search, then continue with the rest.
-    """
-    rect = fitz.Rect(50, 50, 545, 792)  # A4 margins
-    remaining = text.strip()
-
-    def _make_kwargs():
-        kw = {"fontsize": fontsize, "align": 0}
-        if fontfile:
-            kw["fontname"] = "custom"
-            kw["fontfile"] = fontfile
-        return kw
-
-    while remaining:
-        page = doc.new_page(width=595, height=842)
-        rc = page.insert_textbox(rect, remaining, **_make_kwargs())
-        if rc >= 0:
-            break  # all text fit
-
-        # Text didn't fit — binary search for max chars that fit
-        doc.delete_page(-1)  # remove the failed page
-        lo, hi = 0, len(remaining)
-        best = 0
-
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            # Try to break at a newline or space near mid
-            cut = remaining.rfind("\n", 0, mid)
-            if cut <= lo:
-                cut = remaining.rfind(" ", 0, mid)
-            if cut <= lo:
-                cut = mid
-            if cut <= 0:
-                break
-
-            test_page = doc.new_page(width=595, height=842)
-            test_rc = test_page.insert_textbox(rect, remaining[:cut], **_make_kwargs())
-            doc.delete_page(-1)
-
-            if test_rc >= 0:
-                best = cut
-                lo = mid + 1
-            else:
-                hi = mid - 1
-
-        if best <= 0:
-            # Can't fit anything — force a chunk to avoid infinite loop
-            best = min(2000, len(remaining))
-
-        page = doc.new_page(width=595, height=842)
-        page.insert_textbox(rect, remaining[:best], **_make_kwargs())
-        remaining = remaining[best:].strip()
+        except FileNotFoundError:
+            logger.warning("ebook-convert not found in PATH")
+            return None
+        except Exception:
+            logger.warning("Calibre conversion error", exc_info=True)
+            return None
 
 
 async def epub_to_pdf(epub_bytes: bytes) -> bytes:
@@ -129,52 +61,32 @@ async def epub_to_pdf(epub_bytes: bytes) -> bytes:
         if result:
             return result
 
-    # Fallback: extract text and build PDF with proper pagination
+    # Fallback: extract text and build simple PDF
     import zipfile
     from bs4 import BeautifulSoup
 
-    fontfile = _find_font()
     doc = fitz.open()
-
-    with zipfile.ZipFile(io.BytesIO(epub_bytes)) as zf:
-        # Read OPF spine order if available
-        opf_file = next((n for n in zf.namelist() if n.endswith(".opf")), None)
-        ordered_files = []
-
-        if opf_file:
-            opf_soup = BeautifulSoup(zf.read(opf_file), "lxml-xml")
-            base_dir = opf_file.rsplit("/", 1)[0] if "/" in opf_file else ""
-            manifest = {}
-            for item in opf_soup.find_all("item"):
-                if item.get("id") and item.get("href"):
-                    href = item["href"]
-                    full = f"{base_dir}/{href}" if base_dir else href
-                    manifest[item["id"]] = full
-            for itemref in opf_soup.find_all("itemref"):
-                idref = itemref.get("idref", "")
-                if idref in manifest:
-                    ordered_files.append(manifest[idref])
-
-        if not ordered_files:
-            ordered_files = sorted(
+    try:
+        with zipfile.ZipFile(io.BytesIO(epub_bytes)) as zf:
+            html_files = sorted(
                 n for n in zf.namelist()
                 if n.endswith((".html", ".xhtml", ".htm"))
+                and "toc" not in n.lower()
             )
-
-        for name in ordered_files:
-            try:
-                raw = zf.read(name)
-            except KeyError:
-                continue
-            soup = BeautifulSoup(raw, "lxml")
-            text = soup.get_text(separator="\n").strip()
-            if not text:
-                continue
-            _insert_text_paginated(doc, text, fontsize=11, fontfile=fontfile)
-
-    if len(doc) == 0:
-        page = doc.new_page(width=595, height=842)
-        page.insert_textbox(fitz.Rect(50, 50, 545, 792), "(No text content found)", fontsize=14)
+            for name in html_files:
+                soup = BeautifulSoup(zf.read(name), "lxml")
+                text = soup.get_text(separator="\n").strip()
+                if not text:
+                    continue
+                page = doc.new_page(width=595, height=842)  # A4
+                page.insert_textbox(
+                    fitz.Rect(50, 50, 545, 792),
+                    text,
+                    fontsize=11,
+                    align=0,
+                )
+    except Exception:
+        logger.warning("EPUB to PDF fallback conversion failed", exc_info=True)
 
     return doc.tobytes()
 
@@ -215,11 +127,7 @@ async def pdf_to_epub(pdf_bytes: bytes, title: str = "Book") -> bytes:
     book.add_item(epub_lib.EpubNav())
     book.spine = ["nav"] + chapters
 
-    tmp_out = tempfile.NamedTemporaryFile(suffix=".epub", delete=False)
-    tmp_out.close()
-    try:
-        epub_lib.write_epub(tmp_out.name, book)
-        with open(tmp_out.name, "rb") as f:
-            return f.read()
-    finally:
-        os.unlink(tmp_out.name)
+    out = io.BytesIO()
+    epub_lib.write_epub(out, book)
+    out.seek(0)
+    return out.read()
