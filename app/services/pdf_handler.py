@@ -81,6 +81,8 @@ async def translate_pdf(
             progress_callback(int((page_idx + 1) / total * 90))
 
     out_bytes = out_doc.tobytes()
+    src_doc.close()
+    out_doc.close()
 
     if progress_callback:
         progress_callback(100)

@@ -271,19 +271,23 @@
     document.getElementById('fileRow').classList.remove('visible');
     document.getElementById('coverImg').style.display = 'none';
     document.getElementById('coverPlaceholder').style.display = 'flex';
+    if (coverBlobUrl) { URL.revokeObjectURL(coverBlobUrl); coverBlobUrl = null; }
     updateButtons();
   }
 
+  let coverBlobUrl = null;
+
   async function loadCover(file) {
     try {
+      if (coverBlobUrl) { URL.revokeObjectURL(coverBlobUrl); coverBlobUrl = null; }
       const fd = new FormData();
       fd.append('file', file);
       const res = await fetch('/cover', { method: 'POST', body: fd });
       if (!res.ok) return;
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      coverBlobUrl = URL.createObjectURL(blob);
       const img = document.getElementById('coverImg');
-      img.src = url;
+      img.src = coverBlobUrl;
       img.style.display = 'block';
       document.getElementById('coverPlaceholder').style.display = 'none';
     } catch { /* no cover, that's fine */ }
@@ -405,12 +409,14 @@
     const disposition = res.headers.get('content-disposition') || '';
     const match = disposition.match(/filename="?([^"]+)"?/);
     const name = match ? match[1] : 'output.epub';
+    const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    a.href = blobUrl;
     a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
+    URL.revokeObjectURL(blobUrl);
   }
 
   // ── UI helpers ────────────────────────────────────────────────────────────

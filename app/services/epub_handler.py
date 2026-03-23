@@ -39,8 +39,8 @@ def _find_block_parent(node) -> Tag | None:
 
 
 def _collect_blocks(soup) -> list[tuple[Tag, list[NavigableString]]]:
-    blocks: list[tuple] = []
-    block_map: dict[int, list] = {}
+    blocks: list[tuple[Tag, list[NavigableString]]] = []
+    block_map: dict[int, list[NavigableString]] = {}
 
     for string in soup.find_all(string=True):
         if not isinstance(string, NavigableString):
@@ -72,32 +72,27 @@ async def translate_epub(
     items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
     total = max(len(items), 1)
 
-    # Count total blocks across all documents for granular progress
-    all_items_blocks: list[int] = []
+    # Parse all documents once — reuse soup for both counting and translating
+    parsed: list[tuple[BeautifulSoup, list[tuple[Tag, list[NavigableString]]]]] = []
     total_blocks = 0
     for item in items:
-        c = item.get_content()
-        s = BeautifulSoup(c, "lxml")
-        n = len(_collect_blocks(s))
-        all_items_blocks.append(n)
-        total_blocks += n
+        soup = BeautifulSoup(item.get_content(), "lxml")
+        blocks = _collect_blocks(soup)
+        parsed.append((soup, blocks))
+        total_blocks += len(blocks)
     blocks_done = 0
 
     for doc_idx, item in enumerate(items):
-        content = item.get_content()
-        soup = BeautifulSoup(content, "lxml")
+        soup, blocks = parsed[doc_idx]
 
         if bilingual:
-            # Inject CSS inline via <style> tag to avoid path issues across EPUB structures
             head = soup.find("head")
             if head:
                 style_tag = soup.new_tag("style", type="text/css")
                 style_tag.string = BILINGUAL_CSS
                 head.append(style_tag)
 
-        blocks = _collect_blocks(soup)
         if not blocks:
-            blocks_done += all_items_blocks[doc_idx]
             if progress_callback:
                 progress_callback(int(blocks_done / max(total_blocks, 1) * 90))
             continue

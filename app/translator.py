@@ -46,7 +46,7 @@ MAX_RETRIES = 2
 MAX_CONCURRENT = 5  # parallel translation requests
 
 # Batch translation constants
-BATCH_SEP = "KBTXSEP"
+BATCH_SEP = "\n|||KBTXSEP|||\n"
 BATCH_SEP_RE = re.compile(re.escape(BATCH_SEP))
 BATCH_SIZE = 12
 
@@ -100,7 +100,7 @@ async def _translate_chunk(translator: GoogleTranslator, chunk: str) -> str:
         except (asyncio.TimeoutError, Exception) as e:
             last_exc = e
             if attempt < MAX_RETRIES - 1:
-                await asyncio.sleep(1.0 * (attempt + 1))
+                await asyncio.sleep(2 ** attempt)
 
     logger.warning("Chunk failed after %d attempts: %s", MAX_RETRIES, last_exc)
     return chunk
@@ -169,7 +169,7 @@ async def batch_translate(
 
         indices, nonempty_texts = zip(*nonempty)
 
-        joined = f" {BATCH_SEP} ".join(nonempty_texts)
+        joined = BATCH_SEP.join(nonempty_texts)
         translated_joined = await translate_text(joined, source_lang, target_lang)
 
         parts = [p.strip() for p in BATCH_SEP_RE.split(translated_joined)]

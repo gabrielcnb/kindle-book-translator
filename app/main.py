@@ -21,7 +21,7 @@ from app import cache
 
 logger = logging.getLogger(__name__)
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 app = FastAPI(title="Kindle Book Translator", version=VERSION)
 
@@ -41,6 +41,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 MAX_SIZE = 50 * 1024 * 1024  # 50 MB
 MAX_JOB_AGE = 3600  # 1 hour
+CLEANUP_INTERVAL = 300  # 5 minutes
 
 jobs: dict[str, dict] = {}
 job_queues: dict[str, asyncio.Queue] = {}
@@ -66,8 +67,18 @@ def _cleanup_old_jobs():
             except Exception:
                 logger.warning("Failed to delete temp file: %s", file_path)
         del jobs[jid]
+        job_queues.pop(jid, None)
     if expired:
         logger.info("Cleaned up %d expired jobs", len(expired))
+
+
+@app.on_event("startup")
+async def _start_periodic_cleanup():
+    async def _loop():
+        while True:
+            await asyncio.sleep(CLEANUP_INTERVAL)
+            _cleanup_old_jobs()
+    asyncio.create_task(_loop())
 
 
 # ──────────────────────────────────────────────────────────────────────────────
