@@ -238,6 +238,10 @@
   <div class="feature"><div class="icon">&#128214;</div><div class="title">Glossary</div><div class="desc">Protect names &amp; terms from translation</div></div>
 </div>
 
+<div style="margin-top:1.2rem;font-size:.75rem;color:var(--muted);text-align:center;max-width:660px;line-height:1.5">
+  Free to use &middot; Limited to <strong style="color:var(--text)">5 translations per hour</strong> per user to keep the service available for everyone.
+</div>
+
 <footer>Open source &middot; Free &middot; <a href="https://github.com/gabrielcnb/kindle-book-translator" style="color:var(--accent)">GitHub</a></footer>
 
 <script>
@@ -465,6 +469,9 @@
     try {
       const res = await fetch(endpoint, { method: 'POST', body: formData });
       if (!res.ok) {
+        if (res.status === 429) {
+          throw new Error('Rate limit reached (max 5 jobs per hour). Please wait and try again.');
+        }
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new Error(err.detail || 'Failed');
       }
