@@ -456,10 +456,37 @@
     } catch {}
   }
 
+  // ── Upload with XHR progress ────────────────────────────────────────────
+  function uploadWithProgress(endpoint, formData) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', endpoint);
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          setProgress(pct * 0.15);
+          document.getElementById('progressText').textContent = `Uploading... ${pct}%`;
+        }
+      });
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(JSON.parse(xhr.responseText));
+        } else if (xhr.status === 429) {
+          reject(new Error('Rate limit reached (max 5 jobs per hour). Please wait and try again.'));
+        } else {
+          try { reject(new Error(JSON.parse(xhr.responseText).detail || 'Failed')); }
+          catch { reject(new Error('Unknown error')); }
+        }
+      });
+      xhr.addEventListener('error', () => reject(new Error('Upload failed. Check your connection.')));
+      xhr.send(formData);
+    });
+  }
+
   // ── Shared job runner ───────────────────────────────────────────────────
   async function runJob(endpoint, formData, label) {
     setRunning(true);
-    resetProgress(label + '...');
+    resetProgress('Uploading...');
     showStatus('');
     document.getElementById('cancelBtn').style.display = '';
     document.getElementById('etaText').textContent = '';
@@ -467,15 +494,8 @@
     etaStartPct = 0;
 
     try {
-      const res = await fetch(endpoint, { method: 'POST', body: formData });
-      if (!res.ok) {
-        if (res.status === 429) {
-          throw new Error('Rate limit reached (max 5 jobs per hour). Please wait and try again.');
-        }
-        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(err.detail || 'Failed');
-      }
-      const { job_id } = await res.json();
+      const { job_id } = await uploadWithProgress(endpoint, formData);
+      document.getElementById('progressText').textContent = label + '...';
       currentJobId = job_id;
 
       const downloadUrl = await listenSSE(job_id, label);
