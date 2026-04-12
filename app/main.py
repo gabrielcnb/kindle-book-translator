@@ -323,7 +323,10 @@ async def start_translation(
     engine: str = Form("google"),
     glossary: str = Form(""),
 ):
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    # Anonymize IP for LGPD compliance (remove last octet)
+    raw_ip = request.client.host if request.client else "unknown"
+    ip = '.'.join(raw_ip.split('.')[:3]) + '.0' if '.' in raw_ip else raw_ip
+    _check_rate_limit(ip)
 
     content = await file.read()
     if len(content) > MAX_SIZE:
@@ -371,7 +374,10 @@ async def start_conversion(
     output_format: str = Form(...),
 ):
     """Convert between EPUB, PDF, MOBI, AZW3."""
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    # Anonymize IP for LGPD compliance (remove last octet)
+    raw_ip = request.client.host if request.client else "unknown"
+    ip = '.'.join(raw_ip.split('.')[:3]) + '.0' if '.' in raw_ip else raw_ip
+    _check_rate_limit(ip)
 
     content = await file.read()
     if len(content) > MAX_SIZE:
