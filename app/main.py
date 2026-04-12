@@ -27,13 +27,23 @@ VERSION = "3.0.0"
 
 app = FastAPI(title="Kindle Book Translator", version=VERSION)
 
-cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+cors_origins = os.getenv("CORS_ORIGINS", "https://kindle-book-translator.onrender.com,http://localhost:8000").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 TEMP_DIR = Path(tempfile.gettempdir()) / "book_translator"
@@ -77,6 +87,7 @@ def _cleanup_old_jobs():
         logger.info("Cleaned up %d expired jobs", len(expired))
 
 
+# TODO: Migrate to lifespan context manager when upgrading FastAPI
 @app.on_event("startup")
 async def _start_periodic_cleanup():
     async def _loop():
